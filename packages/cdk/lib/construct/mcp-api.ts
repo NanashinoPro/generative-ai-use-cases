@@ -1,4 +1,4 @@
-import { Duration } from 'aws-cdk-lib';
+import { Duration, Size } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import {
   DockerImageFunction,
@@ -31,6 +31,7 @@ export class McpApi extends Construct {
           : NetworkMode.DEFAULT,
       }),
       memorySize: 1024,
+      ephemeralStorageSize: Size.mebibytes(1024),
       timeout: Duration.minutes(15),
       architecture: Architecture.X86_64,
       environment: {
