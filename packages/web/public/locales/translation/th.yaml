@@ -567,6 +567,14 @@ meetingMinutes:
   generating: กำลังสร้างรายงานการประชุม...
   generation_error: ไม่สามารถสร้างรายงานการประชุมได้ กรุณาลองอีกครั้ง
   generation_success: สร้างรายงานการประชุมสำเร็จ
+  language: ภาษา
+  language_auto: ตรวจจับอัตโนมัติ
+  language_chinese: จีน
+  language_english: อังกฤษ
+  language_japanese: ญี่ปุ่น
+  language_korean: เกาหลี
+  language_thai: ไทย
+  language_vietnamese: เวียดนาม
   last_generated: สร้างล่าสุดเมื่อ {{time}}
   minutes_placeholder: รายงานการประชุมจะปรากฏที่นี่หลังจากสร้าง
   model: โมเดล
@@ -692,11 +700,17 @@ summarize:
   title: สรุป
 transcribe:
   detailed_parameters: ตั้งค่าขั้นสูงแบบกำหนดเอง
+  direct_input: ป้อนข้อมูลโดยตรง
+  direct_input_instruction: โปรดป้อนข้อความต้นฉบับสำหรับรายงานการประชุมโดยตรงในพื้นที่ "บันทึกการถอดความ" ด้านล่าง
+  direct_input_placeholder: โปรดป้อนข้อความต้นฉบับสำหรับรายงานการประชุมที่นี่...
   file_upload: อัปโหลดไฟล์
   max_speakers: จำนวนผู้พูดสูงสุด
   max_speakers_help: จำนวนผู้พูดสูงสุดในบทสนทนาที่ต้องการแยกแยะ
   mic_input: อินพุตไมโครโฟน
   result_placeholder: ข้อความที่แปลงจากเสียงของคุณ
+  screen_audio: เสียงหน้าจอ
+  screen_audio_error: 'ข้อผิดพลาดเสียงหน้าจอ:'
+  screen_audio_notice: 'สำหรับ Windows: เลือกแท็บ "หน้าจอทั้งหมด" และเปิด "แชร์เสียงระบบด้วย"<br/>สำหรับ Mac: เลือก "Chrome Tab" และเปิด "Also share tab audio"<br/>Chrome และ Edge ใช้งานได้ Firefox ใช้งานไม่ได้'
   select_input_method: โปรดเลือกจากอินพุตไมโครโฟนหรืออัปโหลดไฟล์
   speaker_names: ชื่อผู้พูด (คั่นด้วยเครื่องหมายจุลภาค)
   speaker_recognition: การแยกแยะผู้พูด

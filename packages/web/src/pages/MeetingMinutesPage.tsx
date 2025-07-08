@@ -13,12 +13,14 @@ import ButtonSendToUseCase from '../components/ButtonSendToUseCase';
 import ButtonIcon from '../components/ButtonIcon';
 import useTranscribe from '../hooks/useTranscribe';
 import useMicrophone from '../hooks/useMicrophone';
+import useScreenAudio from '../hooks/useScreenAudio';
 import useMeetingMinutes from '../hooks/useMeetingMinutes';
 import { MODELS } from '../hooks/useModel';
 import {
   PiStopCircleBold,
   PiMicrophoneBold,
   PiPencilLine,
+  PiPaperclip,
 } from 'react-icons/pi';
 import Switch from '../components/Switch';
 import RangeSlider from '../components/RangeSlider';
@@ -26,12 +28,23 @@ import ExpandableField from '../components/ExpandableField';
 import Select from '../components/Select';
 import { Transcript } from 'generative-ai-use-cases';
 import Textarea from '../components/Textarea';
-import { useTranslation } from 'react-i18next';
+import { useTranslation, Trans } from 'react-i18next';
 import { toast } from 'sonner';
 import Markdown from '../components/Markdown';
 import { useNavigate } from 'react-router-dom';
 import queryString from 'query-string';
 import { MeetingMinutesStyle } from '../hooks/useMeetingMinutes';
+import { LanguageCode } from '@aws-sdk/client-transcribe-streaming';
+
+// Time-series transcript segment for chronological integration
+interface TimeSeriesSegment {
+  resultId: string;
+  source: 'microphone' | 'screen';
+  startTime: number;
+  endTime: number;
+  isPartial: boolean;
+  transcripts: Transcript[];
+}
 
 type StateType = {
   content: Transcript[];
@@ -58,6 +71,8 @@ type StateType = {
   setCustomPrompt: (s: string) => void;
   autoGenerateSessionTimestamp: number | null;
   setAutoGenerateSessionTimestamp: (timestamp: number | null) => void;
+  languageCode: string;
+  setLanguageCode: (s: string) => void;
 };
 
 const useMeetingMinutesState = create<StateType>((set) => {
@@ -74,6 +89,7 @@ const useMeetingMinutesState = create<StateType>((set) => {
     generationFrequency: 5,
     customPrompt: '',
     autoGenerateSessionTimestamp: null,
+    languageCode: 'auto', // Default to auto-detection
     setContent: (s: Transcript[]) => {
       set(() => ({
         content: s,
@@ -134,21 +150,36 @@ const useMeetingMinutesState = create<StateType>((set) => {
         autoGenerateSessionTimestamp: timestamp,
       }));
     },
+    setLanguageCode: (s: string) => {
+      set(() => ({
+        languageCode: s,
+      }));
+    },
   };
 });
 
 const MeetingMinutesPage: React.FC = () => {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const { loading, transcriptData, file, setFile, transcribe, clear } =
     useTranscribe();
   const {
-    startTranscription,
-    stopTranscription,
-    transcriptMic,
-    recording,
-    clearTranscripts,
+    startTranscription: startMicTranscription,
+    stopTranscription: stopMicTranscription,
+    recording: micRecording,
+    clearTranscripts: clearMicTranscripts,
+    rawTranscripts: micRawTranscripts,
   } = useMicrophone();
+  const {
+    prepareScreenCapture,
+    startTranscriptionWithStream,
+    stopTranscription: stopScreenTranscription,
+    recording: screenRecording,
+    clearTranscripts: clearScreenTranscripts,
+    isSupported: isScreenAudioSupported,
+    error: screenAudioError,
+    rawTranscripts: screenRawTranscripts,
+  } = useScreenAudio();
   const {
     content,
     setContent,
@@ -174,13 +205,80 @@ const MeetingMinutesPage: React.FC = () => {
     setCustomPrompt,
     autoGenerateSessionTimestamp,
     setAutoGenerateSessionTimestamp,
+    languageCode,
+    setLanguageCode,
   } = useMeetingMinutesState();
   const ref = useRef<HTMLInputElement>(null);
+  const transcriptTextareaRef = useRef<HTMLTextAreaElement>(null);
   const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const shouldGenerateRef = useRef<boolean>(false);
+  const isAtBottomRef = useRef<boolean>(true);
 
   // Countdown state for auto-generation timer
   const [countdownSeconds, setCountdownSeconds] = useState(0);
+
+  // Screen Audio enable/disable state
+  const [enableScreenAudio, setEnableScreenAudio] = useState(false);
+
+  // Input method selection state
+  const [inputMethod, setInputMethod] = useState<
+    'microphone' | 'file' | 'direct'
+  >('microphone');
+
+  // Direct input text state
+  const [directInputText, setDirectInputText] = useState('');
+
+  // Time-series segments management
+  const [timeSeriesSegments, setTimeSeriesSegments] = useState<
+    TimeSeriesSegment[]
+  >([]);
+
+  // Language options for transcription
+  const languageOptions = useMemo(
+    () => [
+      { value: 'auto', label: t('meetingMinutes.language_auto') },
+      { value: 'ja-JP', label: t('meetingMinutes.language_japanese') },
+      { value: 'en-US', label: t('meetingMinutes.language_english') },
+      { value: 'zh-CN', label: t('meetingMinutes.language_chinese') },
+      { value: 'ko-KR', label: t('meetingMinutes.language_korean') },
+      { value: 'th-TH', label: t('meetingMinutes.language_thai') },
+      { value: 'vi-VN', label: t('meetingMinutes.language_vietnamese') },
+    ],
+    [t]
+  );
+
+  // Map i18n language to transcription language, fallback to auto if not supported
+  const getTranscriptionLanguageFromSettings = useCallback(
+    (settingsLang: string): string => {
+      const langMapping: { [key: string]: string } = {
+        ja: 'ja-JP',
+        en: 'en-US',
+        zh: 'zh-CN',
+        ko: 'ko-KR',
+        th: 'th-TH',
+        vi: 'vi-VN',
+      };
+      return langMapping[settingsLang] || 'auto';
+    },
+    []
+  );
+
+  // Set language from settings on mount
+  useEffect(() => {
+    if (i18n.resolvedLanguage && languageCode === 'auto') {
+      const mappedLang = getTranscriptionLanguageFromSettings(
+        i18n.resolvedLanguage
+      );
+      if (mappedLang !== 'auto') {
+        setLanguageCode(mappedLang);
+      }
+    }
+  }, [
+    i18n.resolvedLanguage,
+    languageCode,
+    setLanguageCode,
+    getTranscriptionLanguageFromSettings,
+  ]);
 
   // Model selection state
   const { modelIds: availableModels, modelDisplayName } = MODELS;
@@ -206,15 +304,54 @@ const MeetingMinutesPage: React.FC = () => {
     );
   }, [speakers]);
 
+  // Helper function to format time in MM:SS format
+  const formatTime = useCallback((seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  }, []);
+
+  // Time-series based formatted output
   const formattedOutput: string = useMemo(() => {
-    return content
-      .map((item) =>
-        item.speakerLabel
-          ? `${speakerMapping[item.speakerLabel] || item.speakerLabel}: ${item.transcript}`
-          : item.transcript
-      )
+    // Sort segments by start time (chronological order)
+    // Show both partial and finalized segments for real-time display
+    const sortedSegments = [...timeSeriesSegments].sort(
+      (a, b) => a.startTime - b.startTime
+    );
+
+    return sortedSegments
+      .map((segment) => {
+        const timeStr = `[${formatTime(segment.startTime)}]`;
+        const partialIndicator = segment.isPartial ? ' (...)' : '';
+
+        return segment.transcripts
+          .map((transcript) => {
+            const speakerLabel = transcript.speakerLabel
+              ? `${speakerMapping[transcript.speakerLabel] || transcript.speakerLabel}: `
+              : '';
+            return `${timeStr} ${speakerLabel}${transcript.transcript}${partialIndicator}`;
+          })
+          .join('\n');
+      })
       .join('\n');
-  }, [content, speakerMapping]);
+  }, [timeSeriesSegments, speakerMapping, formatTime]);
+
+  // Auto scroll to bottom when transcript updates if user was at bottom
+  useEffect(() => {
+    if (
+      transcriptTextareaRef.current &&
+      isAtBottomRef.current &&
+      formattedOutput
+    ) {
+      // Small delay to ensure content is rendered
+      setTimeout(() => {
+        if (transcriptTextareaRef.current) {
+          transcriptTextareaRef.current.scrollTop =
+            transcriptTextareaRef.current.scrollHeight;
+        }
+      }, 10);
+    }
+  }, [formattedOutput]);
 
   const onChangeFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -229,11 +366,68 @@ const MeetingMinutesPage: React.FC = () => {
     }
   }, [setContent, transcriptData]);
 
+  // Time-series integration of raw transcripts
+  const updateTimeSeriesSegments = useCallback(
+    (newSegment: TimeSeriesSegment) => {
+      setTimeSeriesSegments((prev) => {
+        const existingIndex = prev.findIndex(
+          (seg) =>
+            seg.resultId === newSegment.resultId &&
+            seg.source === newSegment.source
+        );
+
+        if (existingIndex >= 0) {
+          // Update existing segment (partial result update)
+          const updated = [...prev];
+          updated[existingIndex] = newSegment;
+          return updated;
+        } else {
+          // Add new segment
+          return [...prev, newSegment];
+        }
+      });
+    },
+    []
+  );
+
+  // Process microphone raw transcripts
   useEffect(() => {
-    if (transcriptMic && transcriptMic.length > 0) {
-      setContent(transcriptMic);
+    if (micRawTranscripts && micRawTranscripts.length > 0) {
+      // Only process the latest segment
+      const latestSegment = micRawTranscripts[micRawTranscripts.length - 1];
+      const segment: TimeSeriesSegment = {
+        resultId: latestSegment.resultId,
+        source: 'microphone',
+        startTime: latestSegment.startTime,
+        endTime: latestSegment.endTime,
+        isPartial: latestSegment.isPartial,
+        transcripts: latestSegment.transcripts,
+      };
+      updateTimeSeriesSegments(segment);
     }
-  }, [setContent, transcriptMic]);
+  }, [micRawTranscripts, updateTimeSeriesSegments]);
+
+  // Process screen audio raw transcripts
+  useEffect(() => {
+    if (
+      enableScreenAudio &&
+      screenRawTranscripts &&
+      screenRawTranscripts.length > 0
+    ) {
+      // Only process the latest segment
+      const latestSegment =
+        screenRawTranscripts[screenRawTranscripts.length - 1];
+      const segment: TimeSeriesSegment = {
+        resultId: latestSegment.resultId,
+        source: 'screen',
+        startTime: latestSegment.startTime,
+        endTime: latestSegment.endTime,
+        isPartial: latestSegment.isPartial,
+        transcripts: latestSegment.transcripts,
+      };
+      updateTimeSeriesSegments(segment);
+    }
+  }, [screenRawTranscripts, enableScreenAudio, updateTimeSeriesSegments]);
 
   // Watch for generation signal and trigger generation
   useEffect(() => {
@@ -304,12 +498,19 @@ const MeetingMinutesPage: React.FC = () => {
   }, [autoGenerate, generationFrequency]);
 
   const disabledExec = useMemo(() => {
-    return !file || loading || recording;
-  }, [file, loading, recording]);
+    return !file || loading || micRecording;
+  }, [file, loading, micRecording]);
+
+  const isRecording = micRecording || screenRecording;
 
   const disableClearExec = useMemo(() => {
-    return (!file && content.length === 0) || loading || recording;
-  }, [content, file, loading, recording]);
+    const hasData =
+      file ||
+      content.length > 0 ||
+      formattedOutput.trim() !== '' ||
+      directInputText.trim() !== '';
+    return !hasData || loading || isRecording;
+  }, [content, file, formattedOutput, directInputText, loading, isRecording]);
 
   const disabledMicExec = useMemo(() => {
     return loading;
@@ -318,37 +519,81 @@ const MeetingMinutesPage: React.FC = () => {
   const onClickExec = useCallback(() => {
     if (loading) return;
     // Don't clear existing transcripts - append instead
-    stopTranscription();
-    clearTranscripts();
-    transcribe(speakerLabel, maxSpeakers);
+    stopMicTranscription();
+    clearMicTranscripts();
+    const langCode = languageCode === 'auto' ? undefined : languageCode;
+    transcribe(speakerLabel, maxSpeakers, langCode);
   }, [
     loading,
+    languageCode,
     speakerLabel,
     maxSpeakers,
-    stopTranscription,
-    clearTranscripts,
+    stopMicTranscription,
+    clearMicTranscripts,
     transcribe,
   ]);
 
   const onClickClear = useCallback(() => {
+    // Clear all input methods
+    setDirectInputText('');
     if (ref.current) {
       ref.current.value = '';
     }
     setContent([]);
-    stopTranscription();
+    setTimeSeriesSegments([]);
+    stopMicTranscription();
+    stopScreenTranscription();
     clear();
-    clearTranscripts();
-  }, [setContent, stopTranscription, clear, clearTranscripts]);
+    clearMicTranscripts();
+    clearScreenTranscripts();
+  }, [
+    setContent,
+    stopMicTranscription,
+    stopScreenTranscription,
+    clear,
+    clearMicTranscripts,
+    clearScreenTranscripts,
+  ]);
 
-  const onClickExecStartTranscription = useCallback(() => {
-    if (ref.current) {
-      ref.current.value = '';
-    }
+  const onClickExecStartTranscription = useCallback(async () => {
+    // Clear existing content before starting new recording
     setContent([]);
-    clear();
-    clearTranscripts();
-    startTranscription(undefined, speakerLabel);
-  }, [speakerLabel, clear, clearTranscripts, setContent, startTranscription]);
+    setTimeSeriesSegments([]);
+    clearMicTranscripts();
+    clearScreenTranscripts();
+
+    const langCode =
+      languageCode === 'auto' ? undefined : (languageCode as LanguageCode);
+
+    try {
+      // If screen audio is enabled, prepare screen capture first
+      let screenStream: MediaStream | null = null;
+      if (enableScreenAudio && isScreenAudioSupported) {
+        screenStream = await prepareScreenCapture();
+      }
+
+      // Now start both recordings simultaneously for better synchronization
+      if (screenStream) {
+        startTranscriptionWithStream(screenStream, langCode, speakerLabel);
+      }
+      startMicTranscription(langCode, speakerLabel);
+    } catch (error) {
+      console.error('Failed to start synchronized recording:', error);
+      // Fallback to microphone only if screen preparation fails
+      startMicTranscription(langCode, speakerLabel);
+    }
+  }, [
+    languageCode,
+    speakerLabel,
+    startMicTranscription,
+    enableScreenAudio,
+    isScreenAudioSupported,
+    prepareScreenCapture,
+    startTranscriptionWithStream,
+    setContent,
+    clearMicTranscripts,
+    clearScreenTranscripts,
+  ]);
 
   // Manual generation handler
   const handleManualGeneration = useCallback(() => {
@@ -361,8 +606,10 @@ const MeetingMinutesPage: React.FC = () => {
       return;
     }
 
-    if (formattedOutput.trim() !== '' && !minutesLoading) {
-      generateMinutes(formattedOutput, modelId, (status) => {
+    const textForGeneration =
+      inputMethod === 'direct' ? directInputText : formattedOutput;
+    if (textForGeneration.trim() !== '' && !minutesLoading) {
+      generateMinutes(textForGeneration, modelId, (status) => {
         if (status === 'success') {
           toast.success(t('meetingMinutes.generation_success'));
         } else if (status === 'error') {
@@ -371,6 +618,8 @@ const MeetingMinutesPage: React.FC = () => {
       });
     }
   }, [
+    inputMethod,
+    directInputText,
     formattedOutput,
     minutesLoading,
     modelId,
@@ -397,105 +646,179 @@ const MeetingMinutesPage: React.FC = () => {
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {/* Left Column - Record & Transcribe */}
             <div>
-              {/* Header */}
-              <div className="mb-4 border-b pb-2">
-                <h2 className="text-lg font-semibold">
-                  {t('meetingMinutes.record_transcribe')}
-                </h2>
-              </div>
-
               {/* Audio Input Controls */}
               <div className="mb-4">
-                <div className="mb-2 flex justify-start text-sm text-gray-500">
-                  {t('transcribe.select_input_method')}
-                </div>
-                <div className="mb-4 flex flex-col justify-center lg:flex-row">
-                  <div className="basis-full p-2 lg:basis-3/5 xl:basis-1/2">
-                    <label className="mb-2 block font-bold">
-                      {t('transcribe.mic_input')}
-                    </label>
-                    <div className="flex justify-center">
-                      {recording ? (
-                        <Button
-                          className="h-10 w-full"
-                          onClick={stopTranscription}
-                          disabled={disabledMicExec}>
-                          <PiStopCircleBold className="mr-2 h-5 w-5" />
-                          {t('transcribe.stop_recording')}
-                        </Button>
-                      ) : (
-                        <Button
-                          className="h-10 w-full"
-                          disabled={disabledMicExec}
-                          onClick={() => {
-                            if (!disabledMicExec) {
-                              onClickExecStartTranscription();
-                            }
-                          }}
-                          outlined={true}>
-                          <PiMicrophoneBold className="mr-2 h-5 w-5" />
-                          {t('transcribe.start_recording')}
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                  <div className="basis-full p-2 lg:basis-3/5 xl:basis-1/2">
-                    <label
-                      className="mb-2 block font-bold"
-                      htmlFor="file_input">
-                      {t('transcribe.file_upload')}
-                    </label>
-                    <input
-                      className="border-aws-font-color/20 block h-10 w-full cursor-pointer rounded-lg border
-                text-sm text-gray-900 file:mr-4 file:cursor-pointer file:border-0 file:bg-gray-500
-                file:px-4 file:py-2.5 file:text-white focus:outline-none"
-                      onChange={onChangeFile}
-                      aria-describedby="file_input_help"
-                      id="file_input"
-                      type="file"
-                      accept=".mp3, .mp4, .wav, .flac, .ogg, .amr, .webm, .m4a"
-                      ref={ref}></input>
-                    <p
-                      className="ml-0.5 mt-1 text-xs text-gray-500"
-                      id="file_input_help">
-                      {t('transcribe.supported_files')}
-                    </p>
-                  </div>
+                {/* Tab Headers */}
+                <div className="mb-4 flex border-b border-gray-200">
+                  <button
+                    className={`flex items-center border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
+                      inputMethod === 'microphone'
+                        ? 'border-blue-500 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700'
+                    }`}
+                    onClick={() => setInputMethod('microphone')}>
+                    <PiMicrophoneBold className="mr-2 h-4 w-4" />
+                    {t('transcribe.mic_input')}
+                  </button>
+                  <button
+                    className={`flex items-center border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
+                      inputMethod === 'direct'
+                        ? 'border-blue-500 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700'
+                    }`}
+                    onClick={() => setInputMethod('direct')}>
+                    <PiPencilLine className="mr-2 h-4 w-4" />
+                    {t('transcribe.direct_input')}
+                  </button>
+                  <button
+                    className={`flex items-center border-b-2 px-4 py-2 text-sm font-medium transition-colors ${
+                      inputMethod === 'file'
+                        ? 'border-blue-500 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700'
+                    }`}
+                    onClick={() => setInputMethod('file')}>
+                    <PiPaperclip className="mr-2 h-4 w-4" />
+                    {t('transcribe.file_upload')}
+                  </button>
                 </div>
 
-                {/* Speaker Recognition Parameters */}
-                <ExpandableField
-                  label={t('transcribe.detailed_parameters')}
-                  className="mb-4"
-                  notItem={true}>
-                  <div className="grid grid-cols-2 gap-2 pt-2">
-                    <Switch
-                      label={t('transcribe.speaker_recognition')}
-                      checked={speakerLabel}
-                      onSwitch={setSpeakerLabel}
-                    />
-                    {speakerLabel && (
-                      <RangeSlider
-                        className=""
-                        label={t('transcribe.max_speakers')}
-                        min={2}
-                        max={10}
-                        value={maxSpeakers}
-                        onChange={setMaxSpeakers}
-                        help={t('transcribe.max_speakers_help')}
-                      />
-                    )}
-                  </div>
-                  {speakerLabel && (
-                    <div className="mt-2">
-                      <Textarea
-                        placeholder={t('transcribe.speaker_names')}
-                        value={speakers}
-                        onChange={setSpeakers}
-                      />
+                {/* Tab Content */}
+                <div className="mb-4">
+                  {inputMethod === 'microphone' && (
+                    <div className="p-2">
+                      <div className="flex justify-center">
+                        {isRecording ? (
+                          <Button
+                            className="h-10 w-full"
+                            onClick={() => {
+                              stopMicTranscription();
+                              stopScreenTranscription();
+                            }}
+                            disabled={disabledMicExec}>
+                            <PiStopCircleBold className="mr-2 h-5 w-5" />
+                            {t('transcribe.stop_recording')}
+                          </Button>
+                        ) : (
+                          <Button
+                            className="h-10 w-full"
+                            disabled={disabledMicExec}
+                            onClick={() => {
+                              if (!disabledMicExec) {
+                                onClickExecStartTranscription();
+                              }
+                            }}
+                            outlined={true}>
+                            <PiMicrophoneBold className="mr-2 h-5 w-5" />
+                            {t('transcribe.start_recording')}
+                          </Button>
+                        )}
+                      </div>
+                      {isScreenAudioSupported && (
+                        <div className="ml-0.5 mt-2">
+                          <Switch
+                            label={t('transcribe.screen_audio')}
+                            checked={enableScreenAudio}
+                            onSwitch={setEnableScreenAudio}
+                          />
+                          {enableScreenAudio && (
+                            <div className="mt-2 rounded-md bg-blue-50 p-3 text-sm text-blue-700">
+                              <Trans
+                                i18nKey="transcribe.screen_audio_notice"
+                                components={{ br: <br /> }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
-                </ExpandableField>
+
+                  {inputMethod === 'file' && (
+                    <div className="p-2">
+                      <input
+                        className="border-aws-font-color/20 block h-10 w-full cursor-pointer rounded-lg border
+                  text-sm text-gray-900 file:mr-4 file:cursor-pointer file:border-0 file:bg-gray-500
+                  file:px-4 file:py-2.5 file:text-white focus:outline-none"
+                        onChange={onChangeFile}
+                        aria-describedby="file_input_help"
+                        id="file_input"
+                        type="file"
+                        accept=".mp3, .mp4, .wav, .flac, .ogg, .amr, .webm, .m4a"
+                        ref={ref}></input>
+                      <p
+                        className="ml-0.5 mt-1 text-xs text-gray-500"
+                        id="file_input_help">
+                        {t('transcribe.supported_files')}
+                      </p>
+                    </div>
+                  )}
+
+                  {inputMethod === 'direct' && (
+                    <div className="p-2">
+                      <p className="mb-2 text-sm text-gray-600">
+                        {t('transcribe.direct_input_instruction')}
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Language Selection - Hidden for direct input */}
+                {inputMethod !== 'direct' && (
+                  <div className="mb-4 px-2">
+                    <label className="mb-2 block font-bold">
+                      {t('meetingMinutes.language')}
+                    </label>
+                    <Select
+                      value={languageCode}
+                      onChange={(value) => setLanguageCode(value)}
+                      options={languageOptions}
+                    />
+                  </div>
+                )}
+
+                {/* Speaker Recognition Parameters - Hidden for direct input */}
+                {inputMethod !== 'direct' && (
+                  <ExpandableField
+                    label={t('transcribe.detailed_parameters')}
+                    className="mb-4"
+                    notItem={true}>
+                    <div className="grid grid-cols-2 gap-2 pt-2">
+                      <Switch
+                        label={t('transcribe.speaker_recognition')}
+                        checked={speakerLabel}
+                        onSwitch={setSpeakerLabel}
+                      />
+                      {speakerLabel && (
+                        <RangeSlider
+                          className=""
+                          label={t('transcribe.max_speakers')}
+                          min={2}
+                          max={10}
+                          value={maxSpeakers}
+                          onChange={setMaxSpeakers}
+                          help={t('transcribe.max_speakers_help')}
+                        />
+                      )}
+                    </div>
+                    {speakerLabel && (
+                      <div className="mt-2">
+                        <Textarea
+                          placeholder={t('transcribe.speaker_names')}
+                          value={speakers}
+                          onChange={setSpeakers}
+                        />
+                      </div>
+                    )}
+                  </ExpandableField>
+                )}
+
+                {/* Screen Audio Error Display */}
+                {screenAudioError && (
+                  <div className="mb-4 mt-2 rounded-md bg-red-50 p-3 text-sm text-red-700">
+                    <strong>{t('meetingMinutes.screen_audio_error')}</strong>{' '}
+                    {screenAudioError}
+                  </div>
+                )}
 
                 {/* Left Column Buttons */}
                 <div className="flex justify-end gap-3">
@@ -505,9 +828,11 @@ const MeetingMinutesPage: React.FC = () => {
                     onClick={onClickClear}>
                     {t('common.clear')}
                   </Button>
-                  <Button disabled={disabledExec} onClick={onClickExec}>
-                    {t('meetingMinutes.speech_recognition')}
-                  </Button>
+                  {inputMethod === 'file' && (
+                    <Button disabled={disabledExec} onClick={onClickExec}>
+                      {t('meetingMinutes.speech_recognition')}
+                    </Button>
+                  )}
                 </div>
               </div>
             </div>
@@ -597,15 +922,14 @@ const MeetingMinutesPage: React.FC = () => {
                         }
                       }}
                     />
-                    {/* eslint-disable @shopify/jsx-no-hardcoded-content */}
                     {autoGenerate && countdownSeconds > 0 && (
                       <div className="text-sm text-gray-600">
                         {t('meetingMinutes.next_generation_in')}
-                        {Math.floor(countdownSeconds / 60)}:
+                        {Math.floor(countdownSeconds / 60)}
+                        {t('common.colon')}
                         {(countdownSeconds % 60).toString().padStart(2, '0')}
                       </div>
                     )}
-                    {/* eslint-enable @shopify/jsx-no-hardcoded-content */}
                   </div>
                 </div>
                 {autoGenerate && (
@@ -642,7 +966,9 @@ const MeetingMinutesPage: React.FC = () => {
                   <Button
                     onClick={handleManualGeneration}
                     disabled={
-                      formattedOutput === '' ||
+                      (inputMethod === 'direct'
+                        ? directInputText.trim() === ''
+                        : formattedOutput === '') ||
                       minutesLoading ||
                       (minutesStyle === 'custom' &&
                         (!customPrompt || customPrompt.trim() === ''))
@@ -657,47 +983,68 @@ const MeetingMinutesPage: React.FC = () => {
           {/* Split view for transcript and generated minutes */}
           <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
             {/* Transcript Panel */}
-            <div className="rounded border border-black/30 p-1.5">
+            <div>
               <div className="mb-2 flex items-center justify-between">
                 <div className="font-bold">
                   {t('meetingMinutes.transcript')}
                 </div>
-                {formattedOutput.trim() !== '' && (
+                {(inputMethod === 'direct'
+                  ? directInputText.trim() !== ''
+                  : formattedOutput.trim() !== '') && (
                   <div className="flex">
                     <ButtonCopy
-                      text={formattedOutput}
+                      text={
+                        inputMethod === 'direct'
+                          ? directInputText
+                          : formattedOutput
+                      }
                       interUseCasesKey="transcript"></ButtonCopy>
-                    <ButtonSendToUseCase text={formattedOutput} />
+                    <ButtonSendToUseCase
+                      text={
+                        inputMethod === 'direct'
+                          ? directInputText
+                          : formattedOutput
+                      }
+                    />
                   </div>
                 )}
               </div>
-              {content.length > 0 && (
-                <div>
-                  {content.map((transcript, idx) => (
-                    <div key={idx} className="flex gap-2">
-                      {transcript.speakerLabel && (
-                        <div className="min-w-20">
-                          {speakerMapping[transcript.speakerLabel] ||
-                            transcript.speakerLabel}
-                        </div>
-                      )}
-                      <div className="grow">{transcript.transcript}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {!loading && formattedOutput == '' && (
-                <div className="text-gray-500">
-                  {t('transcribe.result_placeholder')}
-                </div>
-              )}
+              <textarea
+                ref={transcriptTextareaRef}
+                value={
+                  inputMethod === 'direct' ? directInputText : formattedOutput
+                }
+                onChange={(e) => {
+                  // Only used when inputMethod === 'direct' (other modes are readOnly)
+                  setDirectInputText(e.target.value);
+                }}
+                onScroll={(e) => {
+                  // Check if user is at the bottom of the textarea
+                  const target = e.target as HTMLTextAreaElement;
+                  const isAtBottom =
+                    Math.abs(
+                      target.scrollHeight -
+                        target.clientHeight -
+                        target.scrollTop
+                    ) < 3;
+                  isAtBottomRef.current = isAtBottom;
+                }}
+                placeholder={
+                  inputMethod === 'direct'
+                    ? t('transcribe.direct_input_placeholder')
+                    : t('transcribe.result_placeholder')
+                }
+                rows={10}
+                className="min-h-96 w-full resize-none rounded border border-black/30 p-1.5 outline-none"
+                readOnly={inputMethod !== 'direct'}
+              />
               {loading && (
                 <div className="border-aws-sky size-5 animate-spin rounded-full border-4 border-t-transparent"></div>
               )}
             </div>
 
             {/* Generated Minutes Panel */}
-            <div className="rounded border border-black/30 p-1.5">
+            <div>
               <div className="mb-2 flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <div className="font-bold">
@@ -729,12 +1076,14 @@ const MeetingMinutesPage: React.FC = () => {
                   </div>
                 )}
               </div>
-              <Markdown>{generatedMinutes}</Markdown>
-              {!minutesLoading && generatedMinutes === '' && (
-                <div className="text-gray-500">
-                  {t('meetingMinutes.minutes_placeholder')}
-                </div>
-              )}
+              <div className="min-h-96 rounded border border-black/30 p-1.5">
+                <Markdown>{generatedMinutes}</Markdown>
+                {!minutesLoading && generatedMinutes === '' && (
+                  <div className="text-gray-500">
+                    {t('meetingMinutes.minutes_placeholder')}
+                  </div>
+                )}
+              </div>
               {minutesLoading && (
                 <div className="flex items-center gap-2">
                   <div className="border-aws-sky size-5 animate-spin rounded-full border-4 border-t-transparent"></div>
