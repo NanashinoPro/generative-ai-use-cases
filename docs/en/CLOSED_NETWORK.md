@@ -23,6 +23,7 @@ Options related to closed network mode have the `closedNetwork` prefix. The foll
 ## Current Limitations
 
 - Deployment must be performed in an environment with internet connectivity. Also, internet connectivity is required when accessing the operation verification environment from the management console.
+- Deployment requires the same environment as normal mode deployment. Specifically, AWS IAM user configuration, Node.js, and Docker are needed.
 - The region where GenU is deployed and the model region must be the same. Currently, it's not possible to deploy GenU in ap-northeast-1 and use models from us-east-1.
 - Since various resources are created, when importing an existing VPC, it's recommended to use as clean an environment as possible.
 - SAML integration is not available.
