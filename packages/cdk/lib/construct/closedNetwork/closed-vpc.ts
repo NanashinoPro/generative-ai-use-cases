@@ -12,6 +12,7 @@ const VPC_ENDPOINTS: Record<string, ec2.InterfaceVpcEndpointAwsService> = {
   // VPC Endpoints required by app side
   Bedrock: ec2.InterfaceVpcEndpointAwsService.BEDROCK_RUNTIME,
   BedrockAgent: ec2.InterfaceVpcEndpointAwsService.BEDROCK_AGENT_RUNTIME,
+  BedrockAgentApi: ec2.InterfaceVpcEndpointAwsService.BEDROCK_AGENT,
   Ecr: ec2.InterfaceVpcEndpointAwsService.ECR,
   EcrDocker: ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER,
   CloudWatchLogs: ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,

@@ -485,6 +485,33 @@ exports[`GenerativeAiUseCases matches the snapshot (closed network mode) 1`] = `
       },
       "Type": "AWS::EC2::VPCEndpoint",
     },
+    "ClosedVpcVpcEndpointBedrockAgentApiA7EA4FF6": {
+      "Properties": {
+        "PrivateDnsEnabled": true,
+        "SecurityGroupIds": [
+          {
+            "Fn::GetAtt": [
+              "ClosedVpcSecurityGroup985DC3EC",
+              "GroupId",
+            ],
+          },
+        ],
+        "ServiceName": "com.amazonaws.us-east-1.bedrock-agent",
+        "SubnetIds": [
+          {
+            "Ref": "ClosedVpcisolatedSubnet1Subnet2EF6D3F3",
+          },
+          {
+            "Ref": "ClosedVpcisolatedSubnet2SubnetB169C8D3",
+          },
+        ],
+        "VpcEndpointType": "Interface",
+        "VpcId": {
+          "Ref": "ClosedVpcC15583C9",
+        },
+      },
+      "Type": "AWS::EC2::VPCEndpoint",
+    },
     "ClosedVpcVpcEndpointCloudWatchLogs8A2A4714": {
       "Properties": {
         "PrivateDnsEnabled": true,
