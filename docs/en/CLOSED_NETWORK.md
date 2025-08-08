@@ -27,7 +27,8 @@ Options related to closed network mode have the `closedNetwork` prefix. The foll
 - The region where GenU is deployed and the model region must be the same. Currently, it's not possible to deploy GenU in ap-northeast-1 and use models from us-east-1.
 - Since various resources are created, when importing an existing VPC, it's recommended to use as clean an environment as possible.
 - SAML integration is not available.
-- Voice Chat use cases are currently not available.
+- Voice Chat use case is currently not available.
+- AgentCore Chat use case is currently not available.
 
 ## Example of Valid Configuration File
 
