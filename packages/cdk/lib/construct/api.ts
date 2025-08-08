@@ -44,6 +44,7 @@ export interface BackendApiProps {
   readonly crossAccountBedrockRoleArn?: string | null;
   readonly allowedIpV4AddressRanges?: string[] | null;
   readonly allowedIpV6AddressRanges?: string[] | null;
+  readonly additionalS3Buckets?: Bucket[];
 
   // Resource
   readonly userPool: UserPool;
@@ -420,11 +421,13 @@ export class Api extends Construct {
         timeout: Duration.minutes(15),
         environment: {
           CROSS_ACCOUNT_BEDROCK_ROLE_ARN: crossAccountBedrockRoleArn ?? '',
+          MODEL_REGION: modelRegion,
         },
       }
     );
     // Grant S3 read permissions with source IP condition
     if (getFileDownloadSignedUrlFunction.role) {
+      // Default bucket permissions
       allowS3AccessWithSourceIpCondition(
         fileBucket.bucketName,
         getFileDownloadSignedUrlFunction.role,
@@ -434,6 +437,21 @@ export class Api extends Construct {
           ipv6: props.allowedIpV6AddressRanges,
         }
       );
+
+      // Additional buckets permissions (AgentCore, external buckets, etc.)
+      if (props.additionalS3Buckets) {
+        props.additionalS3Buckets.forEach((bucket) => {
+          allowS3AccessWithSourceIpCondition(
+            bucket.bucketName,
+            getFileDownloadSignedUrlFunction.role!,
+            'read',
+            {
+              ipv4: props.allowedIpV4AddressRanges,
+              ipv6: props.allowedIpV6AddressRanges,
+            }
+          );
+        });
+      }
     }
 
     // If SageMaker Endpoint exists, grant permission
