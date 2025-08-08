@@ -21,7 +21,10 @@ const envs: Record<string, Partial<StackInput>> = {
   //   // If you want to override the default settings, add the following
   // },
   dev: {
-    // Parameters for development environment
+    agentEnabled: true,
+    searchAgentEnabled: true,
+    searchEngine: 'Tavily',
+    searchApiKey: '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',
   },
   staging: {
     // Parameters for staging environment

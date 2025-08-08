@@ -142,6 +142,12 @@ const baseStackInputSchema = z.object({
   guardrailEnabled: z.boolean().default(false),
   // Usecase builder
   useCaseBuilderEnabled: z.boolean().default(true),
+  // CodePipeline
+  codePipelineEnabled: z.boolean().default(false),
+  githubConnectionArn: z.string().nullish(),
+  githubRepoOwner: z.string().nullish(),
+  githubRepoName: z.string().nullish(),
+  githubBranch: z.string().default('main'),
   // Flows
   flows: z
     .array(

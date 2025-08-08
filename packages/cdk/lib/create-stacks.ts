@@ -8,6 +8,7 @@ import { RagKnowledgeBaseStack } from './rag-knowledge-base-stack';
 import { GuardrailStack } from './guardrail-stack';
 import { ProcessedStackInput } from './stack-input';
 import { VideoTmpBucketStack } from './video-tmp-bucket-stack';
+import { CodePipelineStack } from './codepipeline-stack';
 
 class DeletionPolicySetter implements cdk.IAspect {
   constructor(private readonly policy: cdk.RemovalPolicy) {}
@@ -161,6 +162,17 @@ export const createStacks = (app: cdk.App, params: ProcessedStackInput) => {
       )
     : null;
 
+  // CodePipeline
+  const codePipelineStack = params.codePipelineEnabled
+    ? new CodePipelineStack(app, `CodePipelineStack${params.env}`, {
+        env: {
+          account: params.account,
+          region: params.region,
+        },
+        params: params,
+      })
+    : null;
+
   return {
     cloudFrontWafStack,
     ragKnowledgeBaseStack,
@@ -168,5 +180,6 @@ export const createStacks = (app: cdk.App, params: ProcessedStackInput) => {
     guardrail,
     generativeAiUseCasesStack,
     dashboardStack,
+    codePipelineStack,
   };
 };

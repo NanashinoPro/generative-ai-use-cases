@@ -47,5 +47,8 @@
     "**/*": [
       "sh -c 'npm run lint'"
     ]
+  },
+  "dependencies": {
+    "cdk": "*"
   }
 }
