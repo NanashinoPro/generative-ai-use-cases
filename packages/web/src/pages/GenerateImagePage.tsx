@@ -8,6 +8,7 @@ import Select from '../components/Select';
 import ExpandableField from '../components/ExpandableField';
 import ButtonIcon from '../components/ButtonIcon';
 import { PiFileArrowUp, PiDiceFive, PiNotePencil } from 'react-icons/pi';
+import { MdDeleteOutline } from 'react-icons/md';
 import useImage from '../hooks/useImage';
 import GenerateImageAssistant from '../components/GenerateImageAssistant';
 import SketchPad, { Canvas } from '../components/SketchPad';
@@ -22,33 +23,53 @@ import { GenerateImagePageQueryParams } from '../@types/navigate';
 import { MODELS } from '../hooks/useModel';
 import { getPrompter } from '../prompts';
 import queryString from 'query-string';
-import { GenerateImageParams } from 'generative-ai-use-cases-jp';
+import { GenerateImageParams } from 'generative-ai-use-cases';
+import {
+  AmazonBaseImageGenerationMode,
+  AmazonUIImageGenerationMode,
+  ControlMode,
+} from 'generative-ai-use-cases';
+import InputText from '../components/InputText';
+import { useTranslation } from 'react-i18next';
 
 const MAX_SAMPLE = 7;
 
-const TITAN_MODELS = {
-  V1: 'amazon.titan-image-generator-v1',
-  V2: 'amazon.titan-image-generator-v2:0',
+const AMAZON_MODELS = {
+  TITAN_V1: 'amazon.titan-image-generator-v1',
+  TITAN_V2: 'amazon.titan-image-generator-v2:0',
+  NOVA_CANVAS: 'amazon.nova-canvas-v1:0',
 };
 const STABILITY_AI_MODELS = {
   STABLE_DIFFUSION_XL: 'stability.stable-diffusion-xl-v1',
   SD3_LARGE: 'stability.sd3-large-v1:0',
-  STABLE_IMAGE_CORE: 'stability.stable-image-core-v1:0',
-  STABLE_IMAGE_ULTRA: 'stability.stable-image-ultra-v1:0',
+  STABLE_IMAGE_CORE1_0: 'stability.stable-image-core-v1:0',
+  STABLE_IMAGE_CORE1_1: 'stability.stable-image-core-v1:1',
+  STABLE_IMAGE_ULTRA1_0: 'stability.stable-image-ultra-v1:0',
+  STABLE_IMAGE_ULTRA1_1: 'stability.stable-image-ultra-v1:1',
+  SD3_5: 'stability.sd3-5-large-v1:0',
 };
-const GENERATION_MODES = {
+const GENERATION_MODES: Record<
+  AmazonBaseImageGenerationMode,
+  AmazonBaseImageGenerationMode
+> = {
   TEXT_IMAGE: 'TEXT_IMAGE',
   IMAGE_VARIATION: 'IMAGE_VARIATION',
   INPAINTING: 'INPAINTING',
   OUTPAINTING: 'OUTPAINTING',
 } as const;
-type GenerationMode = (typeof GENERATION_MODES)[keyof typeof GENERATION_MODES];
-const modeOptions = Object.values(GENERATION_MODES).map((mode) => ({
-  value: mode,
-  label: mode,
-}));
-type ModelInfo = {
-  supportedModes: GenerationMode[];
+const AMAZON_ADVANCED_GENERATION_MODE: Record<
+  AmazonUIImageGenerationMode,
+  AmazonUIImageGenerationMode
+> = {
+  ...GENERATION_MODES,
+  IMAGE_CONDITIONING: 'IMAGE_CONDITIONING',
+  COLOR_GUIDED_GENERATION: 'COLOR_GUIDED_GENERATION',
+  BACKGROUND_REMOVAL: 'BACKGROUND_REMOVAL',
+};
+type ModelInfo<T extends 'base' | 'advanced'> = {
+  supportedModes: T extends 'base'
+    ? AmazonBaseImageGenerationMode[]
+    : AmazonUIImageGenerationMode[];
   resolutionPresets: { value: string; label: string }[];
 };
 const defaultModelPresets = [
@@ -64,7 +85,12 @@ const stabilityAi2024ModelPresets = [
   { value: '16:9', label: '1344 x 768' },
   { value: '21:9', label: '1536 x 640' },
 ];
-const modelInfo: Record<string, ModelInfo> = {
+// Add the following image size for Nova Reel 1st frame image generation to Nova Canvas
+const novaCanvasPresets = [
+  ...defaultModelPresets,
+  { value: '1280 x 720', label: '1280 x 720' },
+];
+const modelInfo: Record<string, ModelInfo<'base' | 'advanced'>> = {
   [STABILITY_AI_MODELS.STABLE_DIFFUSION_XL]: {
     supportedModes: [
       GENERATION_MODES.TEXT_IMAGE,
@@ -81,15 +107,30 @@ const modelInfo: Record<string, ModelInfo> = {
     ],
     resolutionPresets: stabilityAi2024ModelPresets,
   },
-  [STABILITY_AI_MODELS.STABLE_IMAGE_CORE]: {
+  [STABILITY_AI_MODELS.STABLE_IMAGE_CORE1_0]: {
     supportedModes: [GENERATION_MODES.TEXT_IMAGE],
     resolutionPresets: stabilityAi2024ModelPresets,
   },
-  [STABILITY_AI_MODELS.STABLE_IMAGE_ULTRA]: {
+  [STABILITY_AI_MODELS.STABLE_IMAGE_CORE1_1]: {
     supportedModes: [GENERATION_MODES.TEXT_IMAGE],
     resolutionPresets: stabilityAi2024ModelPresets,
   },
-  [TITAN_MODELS.V1]: {
+  [STABILITY_AI_MODELS.STABLE_IMAGE_ULTRA1_0]: {
+    supportedModes: [GENERATION_MODES.TEXT_IMAGE],
+    resolutionPresets: stabilityAi2024ModelPresets,
+  },
+  [STABILITY_AI_MODELS.STABLE_IMAGE_ULTRA1_1]: {
+    supportedModes: [GENERATION_MODES.TEXT_IMAGE],
+    resolutionPresets: stabilityAi2024ModelPresets,
+  },
+  [STABILITY_AI_MODELS.SD3_5]: {
+    supportedModes: [
+      GENERATION_MODES.TEXT_IMAGE,
+      GENERATION_MODES.IMAGE_VARIATION,
+    ],
+    resolutionPresets: stabilityAi2024ModelPresets,
+  },
+  [AMAZON_MODELS.TITAN_V1]: {
     supportedModes: [
       GENERATION_MODES.TEXT_IMAGE,
       GENERATION_MODES.IMAGE_VARIATION,
@@ -98,16 +139,86 @@ const modelInfo: Record<string, ModelInfo> = {
     ],
     resolutionPresets: defaultModelPresets,
   },
-  [TITAN_MODELS.V2]: {
+  [AMAZON_MODELS.TITAN_V2]: {
     supportedModes: [
-      GENERATION_MODES.TEXT_IMAGE,
-      GENERATION_MODES.IMAGE_VARIATION,
-      GENERATION_MODES.INPAINTING,
-      GENERATION_MODES.OUTPAINTING,
+      AMAZON_ADVANCED_GENERATION_MODE.TEXT_IMAGE,
+      AMAZON_ADVANCED_GENERATION_MODE.IMAGE_VARIATION,
+      AMAZON_ADVANCED_GENERATION_MODE.INPAINTING,
+      AMAZON_ADVANCED_GENERATION_MODE.OUTPAINTING,
+      AMAZON_ADVANCED_GENERATION_MODE.IMAGE_CONDITIONING,
+      AMAZON_ADVANCED_GENERATION_MODE.COLOR_GUIDED_GENERATION,
+      AMAZON_ADVANCED_GENERATION_MODE.BACKGROUND_REMOVAL,
     ],
     resolutionPresets: defaultModelPresets,
+  },
+  [AMAZON_MODELS.NOVA_CANVAS]: {
+    supportedModes: [
+      AMAZON_ADVANCED_GENERATION_MODE.TEXT_IMAGE,
+      AMAZON_ADVANCED_GENERATION_MODE.IMAGE_VARIATION,
+      AMAZON_ADVANCED_GENERATION_MODE.INPAINTING,
+      AMAZON_ADVANCED_GENERATION_MODE.OUTPAINTING,
+      AMAZON_ADVANCED_GENERATION_MODE.IMAGE_CONDITIONING,
+      AMAZON_ADVANCED_GENERATION_MODE.COLOR_GUIDED_GENERATION,
+      AMAZON_ADVANCED_GENERATION_MODE.BACKGROUND_REMOVAL,
+    ],
+    resolutionPresets: novaCanvasPresets,
   },
 };
+
+const colorsOptions = [
+  {
+    value: '#efd9b4,#d6a692,#a39081,#4d6164,#292522',
+    label: 'Earthy Neutrals',
+  },
+  {
+    value: '#001449,#012677,#005bc5,#00b4fc,#17f9ff',
+    label: 'Ocean Blues',
+  },
+  {
+    value: '#c7003f,#f90050,#f96a00,#faab00,#daf204',
+    label: 'Fiery Sunset',
+  },
+  {
+    value: '#ffd100,#ffee32,#ffd100,#00a86b,#004b23',
+    label: 'Lemon Lime',
+  },
+  {
+    value: '#006400,#228B22,#32CD32,#90EE90,#98FB98',
+    label: 'Forest Greens',
+  },
+  {
+    value: '#4B0082,#8A2BE2,#9370DB,#BA55D3,#DDA0DD',
+    label: 'Royal Purples',
+  },
+  {
+    value: '#FF8C00,#FFA500,#FFD700,#FFFF00,#F0E68C',
+    label: 'Golden Ambers',
+  },
+  {
+    value: '#FFB6C1,#FFC0CB,#FFE4E1,#E6E6FA,#F0F8FF',
+    label: 'Soft Pastels',
+  },
+  {
+    value: '#FF00FF,#00FFFF,#FF0000,#00FF00,#0000FF',
+    label: 'Vivid Rainbow',
+  },
+  {
+    value: '#000000,#333333,#666666,#999999,#CCCCCC',
+    label: 'Classic Monochrome',
+  },
+  {
+    value: '#FFFFFF,#F2F2F2,#E6E6E6,#D9D9D9,#CCCCCC',
+    label: 'Light Grayscale',
+  },
+  {
+    value: '#704214,#8B4513,#A0522D,#CD853F,#DEB887',
+    label: 'Vintage Sepia',
+  },
+  {
+    value: '#FF9900,#232F3E,#ffffff,#00464F,#6C7778',
+    label: 'Smile and Sky',
+  },
+];
 
 const getModeOptions = (imageGenModelId: string) => {
   if (imageGenModelId in modelInfo) {
@@ -152,14 +263,20 @@ type StateType = {
   setCfgScale: (n: number) => void;
   imageStrength: number;
   setImageStrength: (n: number) => void;
-  generationMode: GenerationMode;
-  setGenerationMode: (s: GenerationMode) => void;
+  controlStrength: number;
+  setControlStrength: (n: number) => void;
+  controlMode: ControlMode;
+  setControlMode: (s: ControlMode) => void;
+  generationMode: AmazonUIImageGenerationMode;
+  setGenerationMode: (s: AmazonUIImageGenerationMode) => void;
   initImage: Canvas;
   setInitImage: (s: Canvas) => void;
   maskImage: Canvas;
   setMaskImage: (s: Canvas) => void;
   maskPrompt: string;
   setMaskPrompt: (s: string) => void;
+  colors: string;
+  setColors: (colors: string) => void;
   imageSample: number;
   setImageSample: (n: number) => void;
   image: {
@@ -190,7 +307,9 @@ const useGenerateImagePageState = create<StateType>((set, get) => {
     step: 50,
     cfgScale: 7,
     imageStrength: 0.35,
-    generationMode: modeOptions[0]['value'],
+    controlStrength: 0.7,
+    controlMode: 'CANNY_EDGE' as ControlMode,
+    generationMode: 'TEXT_IMAGE' as AmazonUIImageGenerationMode,
     initImage: {
       imageBase64: '',
       foregroundBase64: '',
@@ -202,6 +321,7 @@ const useGenerateImagePageState = create<StateType>((set, get) => {
       backgroundColor: '',
     },
     maskPrompt: '',
+    colors: colorsOptions[0].value,
     imageSample: 3,
     image: new Array(MAX_SAMPLE).fill({
       base64: '',
@@ -216,14 +336,15 @@ const useGenerateImagePageState = create<StateType>((set, get) => {
       const newResolutionPresets = getResolutionPresets(s);
       const newResolution = newResolutionPresets[0];
       const currentMode = get().generationMode;
-      const availableModes = getModeOptions(s).map((option) => option.value);
+      const availableModes = modelInfo[s]?.supportedModes || [
+        AMAZON_ADVANCED_GENERATION_MODE.TEXT_IMAGE,
+      ];
+      const isValidMode = availableModes.some((mode) => mode === currentMode);
       set(() => ({
         imageGenModelId: s,
         resolutionPresets: newResolutionPresets,
         resolution: newResolution,
-        generationMode: availableModes.includes(currentMode)
-          ? currentMode
-          : availableModes[0],
+        generationMode: isValidMode ? currentMode : availableModes[0],
       }));
     },
     setPrompt: (s) => {
@@ -268,6 +389,16 @@ const useGenerateImagePageState = create<StateType>((set, get) => {
         imageStrength: n,
       }));
     },
+    setControlStrength: (n) => {
+      set(() => ({
+        controlStrength: n,
+      }));
+    },
+    setControlMode: (n) => {
+      set(() => ({
+        controlMode: n,
+      }));
+    },
     setGenerationMode: (s) => {
       set(() => ({
         generationMode: s,
@@ -286,6 +417,11 @@ const useGenerateImagePageState = create<StateType>((set, get) => {
     setMaskPrompt: (s) => {
       set(() => ({
         maskPrompt: s,
+      }));
+    },
+    setColors: (s) => {
+      set(() => ({
+        colors: s,
       }));
     },
     setImageSample: (n) => {
@@ -332,8 +468,8 @@ const useGenerateImagePageState = create<StateType>((set, get) => {
   };
 });
 
-// StableDiffusion の StylePreset
-// 一覧は、以下の style_preset を参照
+// StylePreset for StableDiffusion
+// See the list below for the style_preset
 // https://platform.stability.ai/docs/api-reference#tag/v1generation/operation/textToImage
 const stylePresetOptions = [
   '3d-model',
@@ -358,7 +494,14 @@ const stylePresetOptions = [
   label: s,
 }));
 
+// Control Mode for Image Conditioning when using Titan Image Generator v2
+// https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-titan-image.html
+const controlModeOptions = ['CANNY_EDGE', 'SEGMENTATION'].map((s) => ({
+  value: s as ControlMode,
+  label: s as ControlMode,
+}));
 const GenerateImagePage: React.FC = () => {
+  const { t } = useTranslation();
   const {
     imageGenModelId,
     setImageGenModelId,
@@ -385,6 +528,8 @@ const GenerateImagePage: React.FC = () => {
     setMaskImage,
     maskPrompt,
     setMaskPrompt,
+    colors,
+    setColors,
     image,
     setImage,
     setImageError,
@@ -393,6 +538,10 @@ const GenerateImagePage: React.FC = () => {
     setImageSample,
     imageStrength,
     setImageStrength,
+    controlStrength,
+    setControlStrength,
+    controlMode,
+    setControlMode,
     chatContent,
     setChatContent,
     clear,
@@ -413,7 +562,11 @@ const GenerateImagePage: React.FC = () => {
   const [isOpenMask, setIsOpenMask] = useState(false);
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [detailExpanded, setDetailExpanded] = useState(false);
-  const { modelIds, imageGenModelIds, imageGenModels } = MODELS;
+  const [previousImageSample, setPreviousImageSample] = useState(3);
+  const [previousGenerationMode, setPreviousGenerationMode] =
+    useState<AmazonUIImageGenerationMode>('TEXT_IMAGE');
+  const { modelIds, imageGenModelIds, imageGenModels, modelDisplayName } =
+    MODELS;
   const modelId = getModelId();
   const prompter = useMemo(() => {
     return getPrompter(modelId);
@@ -421,6 +574,9 @@ const GenerateImagePage: React.FC = () => {
   const [width, height] = useMemo(() => {
     return resolution.label.split('x').map((v) => Number(v));
   }, [resolution]);
+  const [colorList, setColorList] = useState<string[]>(
+    colors.split(',').map((color) => color.trim())
+  );
 
   const maskMode = useMemo(() => {
     return (
@@ -431,9 +587,25 @@ const GenerateImagePage: React.FC = () => {
   const maskPromptSupported = useMemo(() => {
     // TODO: Remove Hard Coding
     return (
-      imageGenModelId === TITAN_MODELS.V1 || imageGenModelId === TITAN_MODELS.V2
+      imageGenModelId === AMAZON_MODELS.TITAN_V1 ||
+      imageGenModelId === AMAZON_MODELS.TITAN_V2 ||
+      imageGenModelId === AMAZON_MODELS.NOVA_CANVAS
     );
   }, [imageGenModelId]);
+
+  useEffect(() => {
+    setPreviousGenerationMode(generationMode);
+  }, [generationMode]);
+
+  useEffect(() => {
+    if (generationMode === 'BACKGROUND_REMOVAL') {
+      setPreviousImageSample(imageSample);
+      setImageSample(1);
+    } else if (previousGenerationMode === 'BACKGROUND_REMOVAL') {
+      setImageSample(previousImageSample);
+    }
+    // eslint-disable-next-line  react-hooks/exhaustive-deps
+  }, [generationMode]);
 
   const modeOptions = useMemo(
     () => getModeOptions(imageGenModelId),
@@ -453,7 +625,7 @@ const GenerateImagePage: React.FC = () => {
     // eslint-disable-next-line  react-hooks/exhaustive-deps
   }, [prompter]);
 
-  // LandingPage のデモデータ設定
+  // Setting the demo data for LandingPage
   useEffect(() => {
     const _modelId = !modelId ? modelIds[0] : modelId;
     const _imageGenModelId = !imageGenModelId
@@ -527,6 +699,10 @@ const GenerateImagePage: React.FC = () => {
           seed: _seed,
           step,
           stylePreset: _stylePreset ?? stylePreset,
+          taskType:
+            generationMode === 'IMAGE_CONDITIONING'
+              ? 'TEXT_IMAGE'
+              : generationMode,
         };
 
         if (generationMode === GENERATION_MODES.IMAGE_VARIATION) {
@@ -544,11 +720,35 @@ const GenerateImagePage: React.FC = () => {
             initImage: initImage.imageBase64,
             maskPrompt: maskImage.imageBase64 ? undefined : maskPrompt,
             maskImage: maskImage.imageBase64,
-            maskMode: generationMode,
+          };
+        } else if (
+          generationMode === AMAZON_ADVANCED_GENERATION_MODE.IMAGE_CONDITIONING
+        ) {
+          params = {
+            ...params,
+            initImage: initImage.imageBase64,
+            controlStrength,
+            controlMode,
+          };
+        } else if (
+          generationMode ===
+          AMAZON_ADVANCED_GENERATION_MODE.COLOR_GUIDED_GENERATION
+        ) {
+          params = {
+            ...params,
+            initImage: initImage.imageBase64,
+            colors: colors.split(',').map((color) => color.trim()),
+          };
+        } else if (
+          generationMode === AMAZON_ADVANCED_GENERATION_MODE.BACKGROUND_REMOVAL
+        ) {
+          params = {
+            ...params,
+            initImage: initImage.imageBase64,
           };
         }
 
-        // 解像度の設定
+        // Setting the resolution
         if (modelConfig.resolutionPresets[0].value.includes(':')) {
           params = {
             ...params,
@@ -588,6 +788,7 @@ const GenerateImagePage: React.FC = () => {
       initImage,
       maskPrompt,
       maskImage,
+      colors,
       seed,
       setImage,
       setImageError,
@@ -595,6 +796,8 @@ const GenerateImagePage: React.FC = () => {
       step,
       stylePreset,
       resolution.value,
+      controlMode,
+      controlStrength,
     ]
   );
 
@@ -663,13 +866,17 @@ const GenerateImagePage: React.FC = () => {
     clearChat();
   }, [clear, clearChat]);
 
+  const downloadFileName = useMemo(() => {
+    return prompt.toLowerCase().replace(/ /g, '-').replace(/,/g, '_');
+  }, [prompt]);
+
   return (
     <div className="grid h-screen grid-cols-12 gap-4 p-4">
       <ModalDialog
         isOpen={isOpenSketch}
-        title="初期画像の設定"
+        title={t('generateImage.init_image')}
         className="w-[530px]"
-        help="画像生成の初期状態として使われます。指定した画像に近い画像が生成されます。"
+        help={t('generateImage.help.init_image')}
         onClose={() => {
           setIsOpenSketch(false);
         }}>
@@ -685,9 +892,9 @@ const GenerateImagePage: React.FC = () => {
       </ModalDialog>
       <ModalDialog
         isOpen={isOpenMask}
-        title="マスク画像の設定"
+        title={t('generateImage.mask_image')}
         className="w-[530px]"
-        help="画像生成のマスクとして使われます。マスクした範囲（Inpaint）もしくは外側（Outpaint）が生成されます。"
+        help={t('generateImage.help.mask_image')}
         onClose={() => {
           setIsOpenMask(false);
         }}>
@@ -713,7 +920,7 @@ const GenerateImagePage: React.FC = () => {
           onChangeContent={setChatContent}
           isGeneratingImage={generating}
           onGenerate={async (p, np, sp) => {
-            // 設定に変更があった場合のみ生成する
+            // Generate only if there is a change in the settings
             if (
               p !== prompt ||
               np !== negativePrompt ||
@@ -740,6 +947,7 @@ const GenerateImagePage: React.FC = () => {
               loading={generating}
               error={image[selectedImageIndex].error}
               errorMessage={image[selectedImageIndex].errorMessage}
+              downloadFileName={downloadFileName}
             />
           </div>
 
@@ -773,103 +981,113 @@ const GenerateImagePage: React.FC = () => {
               <PiNotePencil></PiNotePencil>
             </Button>
           </div>
-
-          <Textarea
-            label="プロンプト"
-            help="生成したい画像の説明を記載してください。文章ではなく、単語の羅列で記載します。"
-            value={prompt}
-            onChange={setPrompt}
-            maxHeight={60}
-            rows={2}
-          />
-
-          <Textarea
-            label="ネガティブプロンプト"
-            help="生成したくない要素、排除したい要素を記載してください。文章ではなく、単語の羅列で記載します。"
-            value={negativePrompt}
-            onChange={setNegativePrompt}
-            maxHeight={60}
-            rows={2}
-          />
+          {generationMode !== 'BACKGROUND_REMOVAL' && (
+            <>
+              <Textarea
+                label={t('generateImage.prompt')}
+                help={t('generateImage.help.prompt')}
+                value={prompt}
+                onChange={setPrompt}
+                maxHeight={60}
+                rows={2}
+              />
+              <Textarea
+                label={t('generateImage.negative_prompt')}
+                help={t('generateImage.help.negative_prompt')}
+                value={negativePrompt}
+                onChange={setNegativePrompt}
+                maxHeight={60}
+                rows={2}
+              />
+            </>
+          )}
 
           <div className="grid w-full grid-cols-2 gap-2">
             <Select
-              label="モデル"
+              label={t('generateImage.model')}
               value={imageGenModelId}
               onChange={setImageGenModelId}
               options={imageGenModelIds.map((m) => {
-                return { value: m, label: m };
+                return { value: m, label: modelDisplayName(m) };
               })}
-            />
-            <Select
-              label="サイズ"
-              value={resolution.value}
-              onChange={(value: string) => {
-                const selectedResolution = resolutionPresets.find(
-                  (option: StateType['resolution']) => option.value === value
-                );
-                if (selectedResolution) {
-                  setResolution(selectedResolution);
-                }
-              }}
-              options={resolutionPresets}
               fullWidth
             />
-          </div>
-
-          <div className="grid w-full grid-cols-2 gap-2 pt-4">
-            <div className="relative col-span-2 flex flex-row items-center lg:col-span-1">
-              <RangeSlider
-                className="w-full"
-                label="Seed"
-                min={0}
-                max={4294967295}
-                value={seed[selectedImageIndex]}
-                onChange={(n) => {
-                  setSeed(n, selectedImageIndex);
+            {generationMode !== 'BACKGROUND_REMOVAL' && (
+              <Select
+                label={t('generateImage.resolution')}
+                value={resolution.value}
+                onChange={(value: string) => {
+                  const selectedResolution = resolutionPresets.find(
+                    (option: StateType['resolution']) => option.value === value
+                  );
+                  if (selectedResolution) {
+                    setResolution(selectedResolution);
+                  }
                 }}
-                help="乱数のシード値です。同じシード値を指定すると同じ画像が生成されます。"
+                options={resolutionPresets}
+                fullWidth
               />
-              <ButtonIcon
-                className="absolute -top-0.5 right-[8.2rem]"
-                onClick={onClickRandomSeed}>
-                <PiDiceFive />
-              </ButtonIcon>
-            </div>
-
-            <RangeSlider
-              className="col-span-2 lg:col-span-1"
-              label="画像生成数"
-              min={1}
-              max={7}
-              value={imageSample}
-              onChange={setImageSample}
-              help="Seed をランダム設定しながら画像を指定の数だけ同時に生成します。"
-            />
+            )}
           </div>
+
+          {generationMode !== 'BACKGROUND_REMOVAL' && (
+            <div className="grid w-full grid-cols-2 gap-2 pt-4">
+              <div className="relative col-span-2 flex flex-row items-center lg:col-span-1">
+                <RangeSlider
+                  className="w-full"
+                  label={t('generateImage.seed')}
+                  min={0}
+                  max={4294967295}
+                  value={seed[selectedImageIndex]}
+                  onChange={(n) => {
+                    setSeed(n, selectedImageIndex);
+                  }}
+                  help={t('generateImage.help.seed')}
+                />
+                <ButtonIcon
+                  className="absolute -top-0.5 right-[8.2rem]"
+                  onClick={onClickRandomSeed}>
+                  <PiDiceFive />
+                </ButtonIcon>
+              </div>
+
+              <RangeSlider
+                className="col-span-2 lg:col-span-1"
+                label={t('generateImage.image_samples')}
+                min={1}
+                max={7}
+                value={imageSample}
+                onChange={setImageSample}
+                help={t('generateImage.help.image_samples')}
+              />
+            </div>
+          )}
 
           <ExpandableField
-            label="詳細なパラメータ"
+            label={t('generateImage.detail_parameters')}
             overrideExpanded={detailExpanded}
             setOverrideExpanded={setDetailExpanded}>
             <div className="grid grid-cols-2 gap-2 pt-4">
               <div className="col-span-2 flex flex-col items-stretch justify-start lg:col-span-1">
                 <Select
-                  label="GenerationMode"
+                  label={t('generateImage.generation_mode')}
                   options={modeOptions}
                   value={generationMode}
-                  onChange={(v) => setGenerationMode(v as GenerationMode)}
+                  onChange={(v) =>
+                    setGenerationMode(v as AmazonUIImageGenerationMode)
+                  }
                   fullWidth
+                  help={t('generateImage.help.generation_mode')}
                 />
                 <div className="mb-2 flex flex-row justify-center gap-2 lg:flex-col xl:flex-row">
                   {generationMode !== GENERATION_MODES.TEXT_IMAGE && (
                     <div className="flex flex-col items-center">
                       <div className="mb-1 flex items-center text-sm font-bold">
-                        初期画像
+                        {t('generateImage.init_image')}
                         <Help
                           className="ml-1"
                           position="center"
-                          message="画像生成の初期状態となる画像を設定できます。初期画像を設定することで、初期画像に近い画像を生成するように誘導できます。"
+                          message={t('generateImage.help.init_image')}
                         />
                       </div>
                       <Base64Image
@@ -882,18 +1100,18 @@ const GenerateImagePage: React.FC = () => {
                           setIsOpenSketch(true);
                         }}>
                         <PiFileArrowUp className="mr-2" />
-                        設定
+                        {t('generateImage.set')}
                       </Button>
                     </div>
                   )}
                   {maskMode && (
                     <div className="flex flex-col items-center">
                       <div className="mb-1 flex items-center text-sm font-bold">
-                        マスク画像
+                        {t('generateImage.mask_image')}
                         <Help
                           className="ml-1"
                           position="center"
-                          message="画像のマスクを設定できます。マスク画像を設定することで、マスクされた領域（Inpaint）もしくは外側の領域（Outpaint)を生成できます。マスクプロンプトと併用はできません。"
+                          message={t('generateImage.help.mask_image')}
                         />
                       </div>
                       <Base64Image
@@ -907,15 +1125,15 @@ const GenerateImagePage: React.FC = () => {
                           setIsOpenMask(true);
                         }}>
                         <PiFileArrowUp className="mr-2" />
-                        設定
+                        {t('generateImage.set')}
                       </Button>
                     </div>
                   )}
                 </div>
                 {maskMode && maskPromptSupported && (
                   <Textarea
-                    label="マスクプロンプト"
-                    help="マスクしたい/排除したい要素（Inpaint）、マスクしたくない/残したい要素（Outpaint）を記載してください。文章ではなく、単語の羅列で記載します。マスク画像と併用はできません。"
+                    label={t('generateImage.mask_prompt')}
+                    help={t('generateImage.help.mask_prompt')}
                     value={maskPrompt}
                     onChange={setMaskPrompt}
                     maxHeight={60}
@@ -924,53 +1142,156 @@ const GenerateImagePage: React.FC = () => {
                     disabled={!!maskImage.imageBase64}
                   />
                 )}
-              </div>
+                {generationMode === 'COLOR_GUIDED_GENERATION' && (
+                  <div className="space-y-4">
+                    <div>
+                      <Select
+                        label={t('generateImage.colors')}
+                        help={t('generateImage.help.colors')}
+                        options={colorsOptions}
+                        value={
+                          colorsOptions.find(
+                            (option) => option.value === colors
+                          )?.value || ''
+                        }
+                        onChange={(value) => {
+                          const newColors = value
+                            .split(',')
+                            .map((color) => color.trim());
+                          setColorList(newColors);
+                          setColors(value);
+                        }}
+                        fullWidth
+                        showColorChips
+                      />
+                    </div>
 
-              <div className="col-span-2 flex flex-col items-center justify-start lg:col-span-1">
-                <div className="mb-2 w-full">
+                    <div>
+                      <label className="text-sm font-bold">
+                        {t('generateImage.custom_colors')}
+                      </label>
+                      <div className="mt-2 space-y-2">
+                        {colorList.map((color, index) => (
+                          <div key={index} className="flex items-center gap-2">
+                            <input
+                              type="color"
+                              value={color}
+                              onChange={(e) => {
+                                const newColors = [...colorList];
+                                newColors[index] = e.target.value;
+                                setColorList(newColors);
+                                setColors(newColors.join(','));
+                              }}
+                              className="h-8 w-8 bg-white"
+                            />
+                            <InputText
+                              value={color}
+                              onChange={(value) => {
+                                const newColors = [...colorList];
+                                newColors[index] = value;
+                                setColorList(newColors);
+                                setColors(newColors.join(','));
+                              }}
+                              className="w-24"
+                            />
+                            <ButtonIcon
+                              onClick={() => {
+                                const newColors = colorList.filter(
+                                  (_, i) => i !== index
+                                );
+                                setColorList(newColors);
+                                setColors(newColors.join(','));
+                              }}>
+                              <MdDeleteOutline />
+                            </ButtonIcon>
+                          </div>
+                        ))}
+
+                        <Button
+                          onClick={() => {
+                            const newColors = [...colorList, '#000000'];
+                            setColorList(newColors);
+                            setColors(newColors.join(','));
+                          }}
+                          className="mt-2"
+                          disabled={colorList.length >= 5}>
+                          {t('generateImage.add_color')}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {generationMode === 'IMAGE_CONDITIONING' && (
                   <Select
-                    label="StylePreset"
-                    options={stylePresetOptions}
-                    value={stylePreset}
-                    onChange={setStylePreset}
-                    clearable
+                    label={t('generateImage.control_mode')}
+                    help={t('generateImage.help.control_mode')}
+                    options={controlModeOptions}
+                    value={controlMode}
+                    onChange={(v) => setControlMode(v as ControlMode)}
                     fullWidth
-                  />
-                </div>
-
-                <RangeSlider
-                  className="w-full"
-                  label="CFG Scale"
-                  min={0}
-                  max={30}
-                  value={cfgScale}
-                  onChange={setCfgScale}
-                  help="この値が高いほどプロンプトに対して忠実な画像を生成します。"
-                />
-
-                <RangeSlider
-                  className="w-full"
-                  label="Step"
-                  min={10}
-                  max={50}
-                  value={step}
-                  onChange={setStep}
-                  help="画像生成の反復回数です。Step 数が多いほど画像が洗練されますが、生成に時間がかかります。"
-                />
-
-                {generationMode === GENERATION_MODES.IMAGE_VARIATION && (
-                  <RangeSlider
-                    className="w-full"
-                    label="ImageStrength"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={imageStrength}
-                    onChange={setImageStrength}
-                    help="1に近いほど「初期画像」に近い画像が生成され、0に近いほど「初期画像」とは異なる画像が生成されます。"
                   />
                 )}
               </div>
+
+              {generationMode !== 'BACKGROUND_REMOVAL' && (
+                <div className="col-span-2 flex flex-col items-center justify-start lg:col-span-1">
+                  <div className="mb-2 w-full">
+                    <Select
+                      label={t('generateImage.style_preset')}
+                      options={stylePresetOptions}
+                      value={stylePreset}
+                      onChange={setStylePreset}
+                      clearable
+                      fullWidth
+                    />
+                  </div>
+
+                  <RangeSlider
+                    className="w-full"
+                    label={t('generateImage.cfg_scale')}
+                    min={0}
+                    max={30}
+                    value={cfgScale}
+                    onChange={setCfgScale}
+                    help={t('generateImage.help.cfg_scale')}
+                  />
+
+                  <RangeSlider
+                    className="w-full"
+                    label={t('generateImage.steps')}
+                    min={10}
+                    max={50}
+                    value={step}
+                    onChange={setStep}
+                    help={t('generateImage.help.steps')}
+                  />
+
+                  {generationMode === GENERATION_MODES.IMAGE_VARIATION && (
+                    <RangeSlider
+                      className="w-full"
+                      label={t('generateImage.image_strength')}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={imageStrength}
+                      onChange={setImageStrength}
+                      help={t('generateImage.help.image_strength')}
+                    />
+                  )}
+                  {generationMode === 'IMAGE_CONDITIONING' && (
+                    <RangeSlider
+                      className="w-full"
+                      label={t('generateImage.control_strength')}
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={controlStrength}
+                      onChange={setControlStrength}
+                      help={t('generateImage.help.control_strength')}
+                    />
+                  )}
+                </div>
+              )}
             </div>
           </ExpandableField>
 
@@ -983,15 +1304,22 @@ const GenerateImagePage: React.FC = () => {
               }}
               loading={generating || loadingChat}
               disabled={
-                prompt.length === 0 ||
+                (generationMode !==
+                  AMAZON_ADVANCED_GENERATION_MODE.BACKGROUND_REMOVAL &&
+                  prompt.length === 0) ||
                 (generationMode !== GENERATION_MODES.TEXT_IMAGE &&
+                  generationMode !==
+                    AMAZON_ADVANCED_GENERATION_MODE.COLOR_GUIDED_GENERATION &&
                   !initImage.imageBase64) ||
                 ((generationMode === GENERATION_MODES.INPAINTING ||
                   generationMode === GENERATION_MODES.OUTPAINTING) &&
                   !maskImage.imageBase64 &&
-                  !maskPrompt)
+                  !maskPrompt) ||
+                (generationMode ===
+                  AMAZON_ADVANCED_GENERATION_MODE.COLOR_GUIDED_GENERATION &&
+                  !colors)
               }>
-              生成
+              {t('generateImage.generate')}
             </Button>
 
             <Button
@@ -1001,7 +1329,7 @@ const GenerateImagePage: React.FC = () => {
                 clearAll();
               }}
               disabled={generating || loadingChat}>
-              クリア
+              {t('generateImage.clear')}
             </Button>
           </div>
         </Card>

@@ -3,6 +3,7 @@ import {
   RecordedMessage,
   ToBeRecordedMessage,
   UnrecordedMessage,
+  Metadata,
 } from './message';
 import { Chat } from './chat';
 import { SystemContext } from './systemContext';
@@ -10,17 +11,26 @@ import {
   QueryCommandOutput,
   RetrieveCommandOutput,
 } from '@aws-sdk/client-kendra';
+import { StopReason } from '@aws-sdk/client-bedrock-runtime';
 import {
   FlowInputContent,
   RetrieveCommandOutput as RetrieveCommandOutputKnowledgeBase,
 } from '@aws-sdk/client-bedrock-agent-runtime';
 import { GenerateImageParams } from './image';
+import { GenerateVideoParams, VideoJob } from './video';
 import { ShareId, UserIdAndChatId } from './share';
 
 export type StreamingChunk = {
   text: string;
   trace?: string;
-  stopReason?: string;
+  metadata?: Metadata;
+  stopReason?: StopReason | 'error';
+  sessionId?: string;
+};
+
+export type Pagination<T> = {
+  data: T[];
+  lastEvaluatedKey?: string;
 };
 
 export type CreateChatResponse = {
@@ -35,10 +45,7 @@ export type CreateMessagesResponse = {
   messages: RecordedMessage[];
 };
 
-export type ListChatsResponse = {
-  chats: Chat[];
-  lastEvaluatedKey?: string;
-};
+export type ListChatsResponse = Pagination<Chat>;
 
 export type FindChatByIdResponse = {
   chat: Chat;
@@ -81,16 +88,22 @@ export type UpdateTitleResponse = {
 
 export type PredictRequest = {
   model?: Model;
+  idToken?: string;
   messages: UnrecordedMessage[];
   id: string;
 };
 
 export type PredictResponse = string;
 
-export type PromptFlowRequest = {
+export type FlowRequest = {
   flowIdentifier: string;
   flowAliasIdentifier: string;
   document: FlowInputContent.DocumentMember['document'];
+};
+
+export type OptimizePromptRequest = {
+  prompt: string;
+  targetModelId: string;
 };
 
 export type PredictTitleRequest = {
@@ -120,11 +133,14 @@ export type RetrieveKnowledgeBaseRequest = {
 
 export type RetrieveKnowledgeBaseResponse = RetrieveCommandOutputKnowledgeBase;
 
+export type S3Type = 'default' | 'knowledgeBase';
+
 export type GetFileDownloadSignedUrlRequest = {
   bucketName: string;
   filePrefix: string;
   region?: string;
   contentType?: string;
+  s3Type?: S3Type;
 };
 
 export type GetFileDownloadSignedUrlResponse = string;
@@ -135,6 +151,15 @@ export type GenerateImageRequest = {
 };
 export type GenerateImageResponse = string;
 
+export type GenerateVideoRequest = {
+  model?: Model;
+  params: GenerateVideoParams;
+};
+
+export type GenerateVideoResponse = VideoJob;
+
+export type ListVideoJobsResponse = Pagination<VideoJob>;
+
 export type DeleteFileRequest = {
   fileName: string;
 };
@@ -144,6 +169,7 @@ export type StartTranscriptionRequest = {
   audioUrl: string;
   speakerLabel: boolean;
   maxSpeakers: number;
+  languageCode?: string;
 };
 
 export type StartTranscriptionResponse = {

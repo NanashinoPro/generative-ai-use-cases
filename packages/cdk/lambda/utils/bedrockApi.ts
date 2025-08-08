@@ -1,5 +1,4 @@
 import {
-  BedrockRuntimeClient,
   InvokeModelCommand,
   ConverseCommand,
   ConverseCommandInput,
@@ -10,85 +9,33 @@ import {
   ServiceQuotaExceededException,
   ThrottlingException,
   AccessDeniedException,
+  StartAsyncInvokeCommand,
 } from '@aws-sdk/client-bedrock-runtime';
 import {
   ApiInterface,
   BedrockImageGenerationResponse,
   GenerateImageParams,
+  GenerateVideoParams,
+  Model,
+  StreamingChunk,
   UnrecordedMessage,
-} from 'generative-ai-use-cases-jp';
-import { BEDROCK_TEXT_GEN_MODELS, BEDROCK_IMAGE_GEN_MODELS } from './models';
-import { STSClient, AssumeRoleCommand } from '@aws-sdk/client-sts';
+} from 'generative-ai-use-cases';
+import {
+  BEDROCK_TEXT_GEN_MODELS,
+  BEDROCK_IMAGE_GEN_MODELS,
+  BEDROCK_VIDEO_GEN_MODELS,
+} from './models';
 import { streamingChunk } from './streamingChunk';
+import { initBedrockRuntimeClient } from './bedrockClient';
 
-// STSから一時的な認証情報を取得する関数
-const assumeRole = async (crossAccountBedrockRoleArn: string) => {
-  const stsClient = new STSClient({ region: process.env.MODEL_REGION });
-  const command = new AssumeRoleCommand({
-    RoleArn: crossAccountBedrockRoleArn,
-    RoleSessionName: 'BedrockApiAccess',
-  });
-
-  try {
-    const response = await stsClient.send(command);
-    if (response.Credentials) {
-      return {
-        accessKeyId: response.Credentials?.AccessKeyId,
-        secretAccessKey: response.Credentials?.SecretAccessKey,
-        sessionToken: response.Credentials?.SessionToken,
-      };
-    } else {
-      throw new Error('認証情報を取得できませんでした。');
-    }
-  } catch (error) {
-    console.error('Error assuming role: ', error);
-    throw error;
-  }
-};
-
-// BedrockRuntimeClient を初期化するこの関数は、通常では単純に BedrockRuntimeClient を環境変数で指定されたリージョンで初期化します。
-// 特別なケースとして、異なる AWS アカウントに存在する Bedrock リソースを利用したい場合があります。
-// そのような場合、CROSS_ACCOUNT_BEDROCK_ROLE_ARN 環境変数が設定されているかをチェックします。(cdk.json で crossAccountBedrockRoleArn が設定されている場合に環境変数として設定される)
-// 設定されている場合、指定されたロールを AssumeRole 操作によって引き受け、取得した一時的な認証情報を用いて BedrockRuntimeClient を初期化します。
-// これにより、別の AWS アカウントの Bedrock リソースへのアクセスが可能になります。
-const initBedrockClient = async () => {
-  // CROSS_ACCOUNT_BEDROCK_ROLE_ARN が設定されているかチェック
-  if (process.env.CROSS_ACCOUNT_BEDROCK_ROLE_ARN) {
-    // STS から一時的な認証情報を取得してクライアントを初期化
-    const tempCredentials = await assumeRole(
-      process.env.CROSS_ACCOUNT_BEDROCK_ROLE_ARN
-    );
-
-    if (
-      !tempCredentials.accessKeyId ||
-      !tempCredentials.secretAccessKey ||
-      !tempCredentials.sessionToken
-    ) {
-      throw new Error('STSからの認証情報が不完全です。');
-    }
-
-    return new BedrockRuntimeClient({
-      region: process.env.MODEL_REGION,
-      credentials: {
-        accessKeyId: tempCredentials.accessKeyId,
-        secretAccessKey: tempCredentials.secretAccessKey,
-        sessionToken: tempCredentials.sessionToken,
-      },
-    });
-  } else {
-    // STSを使用しない場合のクライアント初期化
-    return new BedrockRuntimeClient({
-      region: process.env.MODEL_REGION,
-    });
-  }
-};
+const MODEL_REGION = process.env.MODEL_REGION as string;
 
 const createConverseCommandInput = (
-  model: string,
+  model: Model,
   messages: UnrecordedMessage[],
   id: string
 ): ConverseCommandInput => {
-  const modelConfig = BEDROCK_TEXT_GEN_MODELS[model];
+  const modelConfig = BEDROCK_TEXT_GEN_MODELS[model.modelId];
   return modelConfig.createConverseCommandInput(
     messages,
     id,
@@ -99,11 +46,11 @@ const createConverseCommandInput = (
 };
 
 const createConverseStreamCommandInput = (
-  model: string,
+  model: Model,
   messages: UnrecordedMessage[],
   id: string
 ): ConverseStreamCommandInput => {
-  const modelConfig = BEDROCK_TEXT_GEN_MODELS[model];
+  const modelConfig = BEDROCK_TEXT_GEN_MODELS[model.modelId];
   return modelConfig.createConverseStreamCommandInput(
     messages,
     id,
@@ -113,58 +60,61 @@ const createConverseStreamCommandInput = (
   );
 };
 
-const extractConverseOutputText = (
-  model: string,
+const extractConverseOutput = (
+  model: Model,
   output: ConverseCommandOutput
-): string => {
-  const modelConfig = BEDROCK_TEXT_GEN_MODELS[model];
-  return modelConfig.extractConverseOutputText(output);
+): StreamingChunk => {
+  const modelConfig = BEDROCK_TEXT_GEN_MODELS[model.modelId];
+  return modelConfig.extractConverseOutput(output);
 };
 
-const extractConverseStreamOutputText = (
-  model: string,
+const extractConverseStreamOutput = (
+  model: Model,
   output: ConverseStreamOutput
-): string => {
-  const modelConfig = BEDROCK_TEXT_GEN_MODELS[model];
-  return modelConfig.extractConverseStreamOutputText(output);
+): StreamingChunk => {
+  const modelConfig = BEDROCK_TEXT_GEN_MODELS[model.modelId];
+  return modelConfig.extractConverseStreamOutput(output);
 };
 
-const createBodyImage = (
-  model: string,
-  params: GenerateImageParams
-): string => {
-  const modelConfig = BEDROCK_IMAGE_GEN_MODELS[model];
+const createBodyImage = (model: Model, params: GenerateImageParams): string => {
+  const modelConfig = BEDROCK_IMAGE_GEN_MODELS[model.modelId];
   return modelConfig.createBodyImage(params);
 };
 
 const extractOutputImage = (
-  model: string,
+  model: Model,
   response: BedrockImageGenerationResponse
 ): string => {
-  const modelConfig = BEDROCK_IMAGE_GEN_MODELS[model];
+  const modelConfig = BEDROCK_IMAGE_GEN_MODELS[model.modelId];
   return modelConfig.extractOutputImage(response);
+};
+
+const createBodyVideo = (model: Model, params: GenerateVideoParams) => {
+  const modelConfig = BEDROCK_VIDEO_GEN_MODELS[model.modelId];
+  return modelConfig.createBodyVideo(params);
 };
 
 const bedrockApi: Omit<ApiInterface, 'invokeFlow'> = {
   invoke: async (model, messages, id) => {
-    const client = await initBedrockClient();
+    const region = model.region || MODEL_REGION;
+    const client = await initBedrockRuntimeClient({ region });
 
     const converseCommandInput = createConverseCommandInput(
-      model.modelId,
+      model,
       messages,
       id
     );
     const command = new ConverseCommand(converseCommandInput);
     const output = await client.send(command);
 
-    return extractConverseOutputText(model.modelId, output);
+    return extractConverseOutput(model, output).text;
   },
   invokeStream: async function* (model, messages, id) {
-    const client = await initBedrockClient();
-
+    const region = model.region || MODEL_REGION;
+    const client = await initBedrockRuntimeClient({ region });
     try {
       const converseStreamCommandInput = createConverseStreamCommandInput(
-        model.modelId,
+        model,
         messages,
         id
       );
@@ -182,13 +132,14 @@ const bedrockApi: Omit<ApiInterface, 'invokeFlow'> = {
           break;
         }
 
-        const outputText = extractConverseStreamOutputText(
-          model.modelId,
-          response
-        );
+        const output = extractConverseStreamOutput(model, response);
 
-        if (outputText) {
-          yield streamingChunk({ text: outputText });
+        if (output.text || output.trace || output.metadata) {
+          yield streamingChunk({
+            text: output.text,
+            trace: output.trace,
+            metadata: output.metadata,
+          });
         }
 
         if (response.messageStop) {
@@ -196,7 +147,7 @@ const bedrockApi: Omit<ApiInterface, 'invokeFlow'> = {
             text: '',
             stopReason: response.messageStop.stopReason,
           });
-          break;
+          // Metadata comes after the stopReason, so we need to keep loop
         }
       }
     } catch (e) {
@@ -205,34 +156,65 @@ const bedrockApi: Omit<ApiInterface, 'invokeFlow'> = {
         e instanceof ServiceQuotaExceededException
       ) {
         yield streamingChunk({
-          text: 'ただいまアクセスが集中しているため時間をおいて試してみてください。',
+          text: 'The server is currently experiencing high access. Please try again later.',
+          stopReason: 'error',
         });
       } else if (e instanceof AccessDeniedException) {
-        const modelAccessURL = `https://${process.env.MODEL_REGION}.console.aws.amazon.com/bedrock/home?region=${process.env.MODEL_REGION}#/modelaccess`;
+        const modelAccessURL = `https://${region}.console.aws.amazon.com/bedrock/home?region=${region}#/modelaccess`;
         yield streamingChunk({
-          text: `選択したモデルが有効化されていないようです。[Bedrock コンソールの Model Access 画面](${modelAccessURL})にて、利用したいモデルを有効化してください。`,
+          text: `The selected model is not enabled. Please enable the model in the [Bedrock console Model Access screen](${modelAccessURL}).`,
+          stopReason: 'error',
         });
       } else {
         console.error(e);
         yield streamingChunk({
-          text: 'エラーが発生しました。時間をおいて試してみてください。',
+          text:
+            'An error occurred. Please report the following error to the administrator.\n' +
+            e,
+          stopReason: 'error',
         });
       }
     }
   },
   generateImage: async (model, params) => {
-    const client = await initBedrockClient();
+    const region = model.region || MODEL_REGION;
+    const client = await initBedrockRuntimeClient({ region });
 
-    // Stable Diffusion や Titan Image Generator を利用した画像生成は Converse API に対応していないため、InvokeModelCommand を利用する
+    // Image generation using Stable Diffusion or Titan Image Generator is not supported for the Converse API, so InvokeModelCommand is used.
     const command = new InvokeModelCommand({
       modelId: model.modelId,
-      body: createBodyImage(model.modelId, params),
+      body: createBodyImage(model, params),
       contentType: 'application/json',
     });
     const res = await client.send(command);
     const body = JSON.parse(Buffer.from(res.body).toString('utf-8'));
 
-    return extractOutputImage(model.modelId, body);
+    return extractOutputImage(model, body);
+  },
+  generateVideo: async (model, params: GenerateVideoParams) => {
+    const videoBucketRegionMap = JSON.parse(
+      process.env.VIDEO_BUCKET_REGION_MAP ?? '{}'
+    );
+    const region = model.region || MODEL_REGION;
+    const client = await initBedrockRuntimeClient({ region });
+    const tmpOutputBucket = videoBucketRegionMap[region];
+
+    if (!tmpOutputBucket || tmpOutputBucket.length === 0) {
+      throw new Error('Video tmp buket is not defined');
+    }
+
+    const command = new StartAsyncInvokeCommand({
+      modelId: model.modelId,
+      modelInput: createBodyVideo(model, params),
+      outputDataConfig: {
+        s3OutputDataConfig: {
+          s3Uri: `s3://${tmpOutputBucket}`,
+          bucketOwner: process.env.VIDEO_BUCKET_OWNER, // Required for cross-account access
+        },
+      },
+    });
+    const res = await client.send(command);
+    return res.invocationArn!;
   },
 };
 

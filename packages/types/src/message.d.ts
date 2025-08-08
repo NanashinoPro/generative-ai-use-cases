@@ -1,11 +1,15 @@
+import { SupportedMimeType } from '@generative-ai-use-cases/common';
 import { PrimaryKey } from './base';
+import { AdditionalModelRequestFields } from './text';
 
 export type Role = 'system' | 'user' | 'assistant';
 
 export type Model = {
-  type: 'bedrock' | 'bedrockAgent' | 'sagemaker';
+  type: 'bedrock' | 'bedrockAgent' | 'bedrockKb' | 'sagemaker';
   modelId: string;
+  modelParameters?: AdditionalModelRequestFields;
   sessionId?: string;
+  region?: string;
 };
 
 export type Agent = {
@@ -16,7 +20,7 @@ export type Agent = {
 
 export type AgentMap = Record<string, { agentId: string; aliasId: string }>;
 
-export type PromptFlow = {
+export type Flow = {
   flowId: string;
   aliasId: string;
   flowName: string;
@@ -32,40 +36,61 @@ export type MessageAttributes = {
 
 export type UnrecordedMessage = {
   role: Role;
-  // テキスト
+  // Text
   content: string;
-  // 追加データ（画像など）
+  // Additional data (image, etc.)
   trace?: string;
   extraData?: ExtraData[];
   llmType?: string;
+  metadata?: Metadata;
 };
 
 export type ExtraData = {
-  type: string; // 'image' | 'file'
+  type: 'image' | 'video' | 'file' | 'json';
   name: string;
   source: {
-    type: string; // 'S3'
-    mediaType: string; // file type
-    data: string;
+    type: 's3' | 'base64' | 'json';
+    mediaType: string; // mime type (i.e. image/png, text/plain, application/pdf, application/json)
+    data: string; // s3 location for s3, data for base64, json for json
+  };
+};
+
+export type Metadata = {
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    cacheReadInputTokens?: number;
+    cacheWriteInputTokens?: number;
   };
 };
 
 export type UploadedFileType = {
+  id: string;
   file: File;
   name: string;
-  type: string; // 'image' | 'file'
+  type: 'image' | 'video' | 'file';
+  mimeType: SupportedMimeType;
   base64EncodedData?: string;
   s3Url?: string;
   uploading: boolean;
   deleting?: boolean;
+  errorMessages: string[];
 };
 
 export type FileLimit = {
-  accept: string[];
+  accept: {
+    doc: string[];
+    image: string[];
+    video: string[];
+  };
   maxFileCount: number;
   maxFileSizeMB: number;
   maxImageFileCount: number;
   maxImageFileSizeMB: number;
+  maxVideoFileCount: number;
+  maxVideoFileSizeMB: number;
+  strictImageDimensions?: { width: number; height: number }[];
 };
 
 export type RecordedMessage = PrimaryKey &
@@ -80,7 +105,9 @@ export type ToBeRecordedMessage = UnrecordedMessage & {
 
 export type ShownMessage = Partial<PrimaryKey> &
   Partial<MessageAttributes> &
-  UnrecordedMessage;
+  UnrecordedMessage & {
+    traceInlineMessage?: string;
+  };
 
 export type DocumentComment = {
   excerpt: string;

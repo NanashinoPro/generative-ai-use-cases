@@ -1,11 +1,11 @@
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type InterUseCaseParams<T extends Record<string, unknown> = any> = {
-  // key に設定先の画面項目を設定
-  // useLocationのstateで管理している項目のみ指定可能
+  // Set the screen item to be set
+  // Only items managed by useLocation can be specified
   [key in keyof T]: {
-    // value に設定したい値を設定
-    // 遷移元の画面項目の値を埋め込みたい場合は、{interUseCasesKey}を設定することで埋め込み可能
-    // 例) contextに設定されている値を埋め込みたい場合は、{context}を設定する
+    // Set the value you want to set
+    // If you want to embed the value of the screen item of the transition source, set {interUseCasesKey}
+    // For example, if you want to embed the value of context, set {context}
     value: string;
   };
 };
@@ -25,7 +25,7 @@ export type ChatPageQueryParams = BaseQueryParams & {
   systemContext?: string;
 };
 
-export type EditorialPageQueryParams = BaseQueryParams & {
+export type WriterPageQueryParams = BaseQueryParams & {
   sentence?: string;
 };
 
@@ -34,17 +34,26 @@ export type GenerateImagePageQueryParams = BaseQueryParams & {
   imageModelId?: string;
 };
 
+export type GenerateVideoPageQueryParams = BaseQueryParams & {
+  prompt?: string;
+};
+
 export type GenerateTextPageQueryParams = BaseQueryParams & {
   information?: string;
   context?: string;
 };
 
 export type RagPageQueryParams = BaseQueryParams & {
-  content?: stiring;
+  content?: string;
 };
 
 export type AgentPageQueryParams = BaseQueryParams & {
-  content?: stiring;
+  content?: string;
+};
+
+export type McpPageQueryParams = BaseQueryParams & {
+  systemPrompt?: string;
+  content?: string;
 };
 
 export type SummarizePageQueryParams = BaseQueryParams & {
@@ -64,5 +73,9 @@ export type WebContentPageQueryParams = BaseQueryParams & {
 };
 
 export type VideoAnalyzerPageQueryParams = BaseQueryParams & {
+  content: string;
+};
+
+export type DiagramPageQueryParams = BaseQueryParams & {
   content: string;
 };

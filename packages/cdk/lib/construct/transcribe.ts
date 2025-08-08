@@ -6,9 +6,8 @@ import {
   RestApi,
 } from 'aws-cdk-lib/aws-apigateway';
 import { UserPool } from 'aws-cdk-lib/aws-cognito';
-import { IdentityPool } from '@aws-cdk/aws-cognito-identitypool-alpha';
+import { IdentityPool } from 'aws-cdk-lib/aws-cognito-identitypool';
 import { Effect, Policy, PolicyStatement } from 'aws-cdk-lib/aws-iam';
-import { Runtime } from 'aws-cdk-lib/aws-lambda';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import {
   BlockPublicAccess,
@@ -17,11 +16,15 @@ import {
   HttpMethods,
 } from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
+import { allowS3AccessWithSourceIpCondition } from '../utils/s3-access-policy';
+import { LAMBDA_RUNTIME_NODEJS } from '../../consts';
 
 export interface TranscribeProps {
-  userPool: UserPool;
-  idPool: IdentityPool;
-  api: RestApi;
+  readonly userPool: UserPool;
+  readonly idPool: IdentityPool;
+  readonly api: RestApi;
+  readonly allowedIpV4AddressRanges?: string[] | null;
+  readonly allowedIpV6AddressRanges?: string[] | null;
 }
 
 export class Transcribe extends Construct {
@@ -52,20 +55,30 @@ export class Transcribe extends Construct {
     });
 
     const getSignedUrlFunction = new NodejsFunction(this, 'GetSignedUrl', {
-      runtime: Runtime.NODEJS_18_X,
+      runtime: LAMBDA_RUNTIME_NODEJS,
       entry: './lambda/getFileUploadSignedUrl.ts',
       timeout: Duration.minutes(15),
       environment: {
         BUCKET_NAME: audioBucket.bucketName,
       },
     });
-    audioBucket.grantWrite(getSignedUrlFunction);
+    if (getSignedUrlFunction.role) {
+      allowS3AccessWithSourceIpCondition(
+        audioBucket.bucketName,
+        getSignedUrlFunction.role,
+        'write',
+        {
+          ipv4: props.allowedIpV4AddressRanges,
+          ipv6: props.allowedIpV6AddressRanges,
+        }
+      );
+    }
 
     const startTranscriptionFunction = new NodejsFunction(
       this,
       'StartTranscription',
       {
-        runtime: Runtime.NODEJS_18_X,
+        runtime: LAMBDA_RUNTIME_NODEJS,
         entry: './lambda/startTranscription.ts',
         timeout: Duration.minutes(15),
         environment: {
@@ -87,7 +100,7 @@ export class Transcribe extends Construct {
       this,
       'GetTranscription',
       {
-        runtime: Runtime.NODEJS_18_X,
+        runtime: LAMBDA_RUNTIME_NODEJS,
         entry: './lambda/getTranscription.ts',
         timeout: Duration.minutes(15),
         initialPolicy: [

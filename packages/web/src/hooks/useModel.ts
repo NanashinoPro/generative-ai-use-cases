@@ -1,17 +1,38 @@
-import { Model } from 'generative-ai-use-cases-jp';
+import { Model, ModelConfiguration } from 'generative-ai-use-cases';
+import {
+  CRI_PREFIX_PATTERN,
+  modelMetadata,
+} from '@generative-ai-use-cases/common';
 
 const modelRegion = import.meta.env.VITE_APP_MODEL_REGION;
 
-// 環境変数からモデル名などを取得
-const bedrockModelIds: string[] = JSON.parse(import.meta.env.VITE_APP_MODEL_IDS)
-  .map((name: string) => name.trim())
-  .filter((name: string) => name);
-
-const multiModalModelIds: string[] = JSON.parse(
-  import.meta.env.VITE_APP_MULTI_MODAL_MODEL_IDS
+// Get model names and other environment variables
+const bedrockModelConfigs = (
+  JSON.parse(import.meta.env.VITE_APP_MODEL_IDS) as ModelConfiguration[]
 )
-  .map((name: string) => name.trim())
-  .filter((name: string) => name);
+  .map((model) => ({
+    modelId: model.modelId.trim(),
+    region: model.region.trim(),
+  }))
+  .filter((model) => model.modelId);
+const bedrockModelIds: string[] = bedrockModelConfigs.map(
+  (model) => model.modelId
+);
+const lightModelIds: string[] = bedrockModelConfigs
+  .filter((model) => modelMetadata[model.modelId].flags.light)
+  .map((model) => model.modelId);
+const modelIdsInModelRegion: string[] = bedrockModelConfigs
+  .filter((model) => model.region === modelRegion)
+  .map((model) => model.modelId);
+const duplicateBaseModelIds = new Set(
+  bedrockModelIds
+    .map((modelId) => modelId.replace(CRI_PREFIX_PATTERN, ''))
+    .filter((item, index, arr) => arr.indexOf(item) !== index)
+);
+const visionModelIds: string[] = bedrockModelIds.filter(
+  (modelId) => modelMetadata[modelId].flags.image
+);
+const visionEnabled: boolean = visionModelIds.length > 0;
 
 const endpointNames: string[] = JSON.parse(
   import.meta.env.VITE_APP_ENDPOINT_NAMES
@@ -19,38 +40,105 @@ const endpointNames: string[] = JSON.parse(
   .map((name: string) => name.trim())
   .filter((name: string) => name);
 
-const imageGenModelIds: string[] = JSON.parse(
-  import.meta.env.VITE_APP_IMAGE_MODEL_IDS
+const imageModelConfigs = (
+  JSON.parse(import.meta.env.VITE_APP_IMAGE_MODEL_IDS) as ModelConfiguration[]
 )
-  .map((name: string) => name.trim())
-  .filter((name: string) => name);
+  .map(
+    (model: ModelConfiguration): ModelConfiguration => ({
+      modelId: model.modelId.trim(),
+      region: model.region.trim(),
+    })
+  )
+  .filter((model) => model.modelId);
+const imageGenModelIds: string[] = imageModelConfigs.map(
+  (model) => model.modelId
+);
+
+const videoModelConfigs = (
+  JSON.parse(import.meta.env.VITE_APP_VIDEO_MODEL_IDS) as ModelConfiguration[]
+)
+  .map(
+    (model: ModelConfiguration): ModelConfiguration => ({
+      modelId: model.modelId.trim(),
+      region: model.region.trim(),
+    })
+  )
+  .filter((model) => model.modelId);
+const videoGenModelIds: string[] = videoModelConfigs.map(
+  (model) => model.modelId
+);
+const speechToSpeechModelConfigs = (
+  JSON.parse(
+    import.meta.env.VITE_APP_SPEECH_TO_SPEECH_MODEL_IDS
+  ) as ModelConfiguration[]
+)
+  .map(
+    (model: ModelConfiguration): ModelConfiguration => ({
+      modelId: model.modelId.trim(),
+      region: model.region.trim(),
+    })
+  )
+  .filter((model) => model.modelId);
+const speechToSpeechModelIds: string[] = speechToSpeechModelConfigs.map(
+  (model) => model.modelId
+);
 
 const agentNames: string[] = JSON.parse(import.meta.env.VITE_APP_AGENT_NAMES)
   .map((name: string) => name.trim())
   .filter((name: string) => name);
 
-const getPromptFlows = () => {
+const getFlows = () => {
   try {
-    return JSON.parse(import.meta.env.VITE_APP_PROMPT_FLOWS);
+    return JSON.parse(import.meta.env.VITE_APP_FLOWS);
   } catch (e) {
     return [];
   }
 };
 
-const promptFlows = getPromptFlows();
+const flows = getFlows();
 
-// モデルオブジェクトの定義
+// Define model objects
 const textModels = [
-  ...bedrockModelIds.map(
-    (name) => ({ modelId: name, type: 'bedrock' }) as Model
+  ...bedrockModelConfigs.map(
+    (model) =>
+      ({
+        modelId: model.modelId,
+        type: 'bedrock',
+        region: model.region,
+      }) as Model
   ),
   ...endpointNames.map(
     (name) => ({ modelId: name, type: 'sagemaker' }) as Model
   ),
 ];
 const imageGenModels = [
-  ...imageGenModelIds.map(
-    (name) => ({ modelId: name, type: 'bedrock' }) as Model
+  ...imageModelConfigs.map(
+    (model) =>
+      ({
+        modelId: model.modelId,
+        type: 'bedrock',
+        region: model.region,
+      }) as Model
+  ),
+];
+const videoGenModels = [
+  ...videoModelConfigs.map(
+    (model) =>
+      ({
+        modelId: model.modelId,
+        type: 'bedrock',
+        region: model.region,
+      }) as Model
+  ),
+];
+const speechToSpeechModels = [
+  ...speechToSpeechModelConfigs.map(
+    (model) =>
+      ({
+        modelId: model.modelId,
+        type: 'bedrock',
+        region: model.region,
+      }) as Model
   ),
 ];
 const agentModels = [
@@ -60,19 +148,55 @@ const agentModels = [
 ];
 
 export const findModelByModelId = (modelId: string) => {
-  return [...textModels, ...imageGenModels, ...agentModels].find(
-    (m) => m.modelId === modelId
-  );
+  const model = [
+    ...textModels,
+    ...imageGenModels,
+    ...videoGenModels,
+    ...agentModels,
+  ].find((m) => m.modelId === modelId);
+
+  if (model) {
+    // deep copy
+    return JSON.parse(JSON.stringify(model));
+  }
+
+  return undefined;
+};
+
+const searchAgent = agentNames.find((name) => name.includes('Search'));
+
+const modelDisplayName = (modelId: string): string => {
+  // If there are multiple instances of the same model, add CRI suffix to the display name
+  let displayName = modelMetadata[modelId]?.displayName ?? modelId;
+  if (duplicateBaseModelIds.has(modelId.replace(CRI_PREFIX_PATTERN, ''))) {
+    const criMatch = modelId.match(CRI_PREFIX_PATTERN);
+    if (criMatch) {
+      displayName += ` (${criMatch[1].toUpperCase()})`;
+    }
+  }
+  return displayName;
 };
 
 export const MODELS = {
   modelRegion: modelRegion,
   modelIds: [...bedrockModelIds, ...endpointNames],
-  multiModalModelIds: multiModalModelIds,
+  modelIdsInModelRegion,
+  modelMetadata,
+  modelDisplayName,
+  lightModelIds,
+  visionModelIds: visionModelIds,
+  visionEnabled: visionEnabled,
   imageGenModelIds: imageGenModelIds,
+  videoGenModelIds: videoGenModelIds,
   agentNames: agentNames,
   textModels: textModels,
   imageGenModels: imageGenModels,
+  videoGenModels: videoGenModels,
   agentModels: agentModels,
-  promptFlows,
+  agentEnabled: agentNames.length > 0,
+  searchAgent: searchAgent,
+  flows,
+  flowChatEnabled: flows.length > 0,
+  speechToSpeechModelIds: speechToSpeechModelIds,
+  speechToSpeechModels: speechToSpeechModels,
 };

@@ -21,7 +21,7 @@ browser.tabs.onUpdated.addListener(async () => {
   browser.contextMenus.removeAll().then(() => {
     browser.contextMenus.create({
       id: 'default',
-      title: 'Bedrock連携を開く',
+      title: 'GenU拡張機能を開く',
       contexts: ['page'],
     });
 
@@ -40,7 +40,7 @@ browser.tabs.onUpdated.addListener(async () => {
 
 browser.contextMenus.onClicked.addListener(async (info, tab) => {
   if (tab?.id !== undefined) {
-    // backgroundからはTAB指定でメッセージを送信する
+    // Send a message from the background to the TAB
     Browser.tabs.sendMessage(tab.id, { type: 'CHAT-OPEN' } as MessagePayload);
     Browser.tabs.sendMessage(tab.id, {
       type: 'CONTENT',

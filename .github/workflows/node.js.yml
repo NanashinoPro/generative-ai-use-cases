@@ -13,13 +13,15 @@ on:
 
 jobs:
   check-lint-build:
-    name: 'Check lint and build'
+    name: 'Check test, lint and build'
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
         node-version: [18.x]
         # See supported Node.js release schedule at https://nodejs.org/en/about/releases/
+    env:
+      CDK_DEFAULT_ACCOUNT: 123456789012
 
     steps:
       - uses: actions/checkout@v3
@@ -29,11 +31,10 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
       - run: npm ci
+      - run: npm run test
+      - run: npm run custom-lint:build
       - run: npm run web:lint
       - run: npm run cdk:lint
       - run: npm run web:build
-      - name: 'エラー防止のために cdk.json に仮の値を設定'
-        run: |
-          cat ./packages/cdk/cdk.json | jq '.context.openAiApiKeySecretArn |= "arn:aws:secretsmanager:us-west-2:123456789012:secret:openai-secret-XXXXXX"' > ./packages/cdk/temp.json
-          mv ./packages/cdk/temp.json ./packages/cdk/cdk.json
+      - run: npm run cdk:test
       - run: npm -w packages/cdk run cdk synth

@@ -9,34 +9,35 @@ import {
   RagKnowledgeBase,
   Transcribe,
   CommonWebAcl,
+  SpeechToSpeech,
+  McpApi,
 } from './construct';
 import { CfnWebACLAssociation } from 'aws-cdk-lib/aws-wafv2';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import { ICertificate } from 'aws-cdk-lib/aws-certificatemanager';
-import { Agent, PromptFlow } from 'generative-ai-use-cases-jp';
+import { Agent } from 'generative-ai-use-cases';
+import { UseCaseBuilder } from './construct/use-case-builder';
+import { ProcessedStackInput } from './stack-input';
+import { allowS3AccessWithSourceIpCondition } from './utils/s3-access-policy';
 
-const errorMessageForBooleanContext = (key: string) => {
-  return `${key} の設定でエラーになりました。原因として考えられるものは以下です。
- - cdk.json の変更ではなく、-c オプションで設定しようとしている
- - cdk.json に boolean ではない値を設定している (例: "true" ダブルクォートは不要)
- - cdk.json に項目がない (未設定)`;
-};
-
-interface GenerativeAiUseCasesStackProps extends StackProps {
-  webAclId?: string;
-  allowedIpV4AddressRanges: string[] | null;
-  allowedIpV6AddressRanges: string[] | null;
-  allowedCountryCodes: string[] | null;
-  cert?: ICertificate;
-  hostName?: string;
-  domainName?: string;
-  hostedZoneId?: string;
-  agents?: Agent[];
-  promptFlows?: PromptFlow[];
-  knowledgeBaseId?: string;
-  knowledgeBaseDataSourceBucketName?: string;
-  guardrailIdentifier?: string;
-  guardrailVersion?: string;
+export interface GenerativeAiUseCasesStackProps extends StackProps {
+  readonly params: ProcessedStackInput;
+  // RAG Knowledge Base
+  readonly knowledgeBaseId?: string;
+  readonly knowledgeBaseDataSourceBucketName?: string;
+  // Agent
+  readonly agents?: Agent[];
+  // Video Generation
+  readonly videoBucketRegionMap: Record<string, string>;
+  // Guardrail
+  readonly guardrailIdentifier?: string;
+  readonly guardrailVersion?: string;
+  // WAF
+  readonly webAclId?: string;
+  // Custom Domain
+  readonly cert?: ICertificate;
+  // Image build environment
+  readonly isSageMakerStudio: boolean;
 }
 
 export class GenerativeAiUseCasesStack extends Stack {
@@ -49,80 +50,58 @@ export class GenerativeAiUseCasesStack extends Stack {
     props: GenerativeAiUseCasesStackProps
   ) {
     super(scope, id, props);
-
     process.env.overrideWarningsEnabled = 'false';
 
-    const ragEnabled: boolean = this.node.tryGetContext('ragEnabled')!;
-    const ragKnowledgeBaseEnabled: boolean = this.node.tryGetContext(
-      'ragKnowledgeBaseEnabled'
-    )!;
-    const selfSignUpEnabled: boolean =
-      this.node.tryGetContext('selfSignUpEnabled')!;
-    const allowedSignUpEmailDomains: string[] | null | undefined =
-      this.node.tryGetContext('allowedSignUpEmailDomains');
-    const samlAuthEnabled: boolean =
-      this.node.tryGetContext('samlAuthEnabled')!;
-    const samlCognitoDomainName: string = this.node.tryGetContext(
-      'samlCognitoDomainName'
-    )!;
-    const samlCognitoFederatedIdentityProviderName: string =
-      this.node.tryGetContext('samlCognitoFederatedIdentityProviderName')!;
-    const agentEnabled = this.node.tryGetContext('agentEnabled') || false;
-    const promptFlows = this.node.tryGetContext('promptFlows') || [];
+    const params = props.params;
 
-    const guardrailEnabled: boolean =
-      this.node.tryGetContext('guardrailEnabled') || false;
-
-    if (typeof ragEnabled !== 'boolean') {
-      throw new Error(errorMessageForBooleanContext('ragEnabled'));
-    }
-
-    if (typeof ragKnowledgeBaseEnabled !== 'boolean') {
-      throw new Error(errorMessageForBooleanContext('ragKnowledgeBaseEnabled'));
-    }
-
-    if (typeof selfSignUpEnabled !== 'boolean') {
-      throw new Error(errorMessageForBooleanContext('selfSignUpEnabled'));
-    }
-
-    if (typeof samlAuthEnabled !== 'boolean') {
-      throw new Error(errorMessageForBooleanContext('samlAuthEnabled'));
-    }
-
-    if (typeof guardrailEnabled !== 'boolean') {
-      throw new Error(
-        errorMessageForBooleanContext('guardrailsForAmazonBedrockEnabled')
-      );
-    }
-
+    // Auth
     const auth = new Auth(this, 'Auth', {
-      selfSignUpEnabled,
-      allowedIpV4AddressRanges: props.allowedIpV4AddressRanges,
-      allowedIpV6AddressRanges: props.allowedIpV6AddressRanges,
-      allowedSignUpEmailDomains,
-      samlAuthEnabled,
+      selfSignUpEnabled: params.selfSignUpEnabled,
+      allowedIpV4AddressRanges: params.allowedIpV4AddressRanges,
+      allowedIpV6AddressRanges: params.allowedIpV6AddressRanges,
+      allowedSignUpEmailDomains: params.allowedSignUpEmailDomains,
+      samlAuthEnabled: params.samlAuthEnabled,
     });
+
+    // Database
     const database = new Database(this, 'Database');
 
+    // API
     const api = new Api(this, 'API', {
+      modelRegion: params.modelRegion,
+      modelIds: params.modelIds,
+      imageGenerationModelIds: params.imageGenerationModelIds,
+      videoGenerationModelIds: params.videoGenerationModelIds,
+      videoBucketRegionMap: props.videoBucketRegionMap,
+      endpointNames: params.endpointNames,
+      customAgents: params.agents,
+      queryDecompositionEnabled: params.queryDecompositionEnabled,
+      rerankingModelId: params.rerankingModelId,
+      crossAccountBedrockRoleArn: params.crossAccountBedrockRoleArn,
+      allowedIpV4AddressRanges: params.allowedIpV4AddressRanges,
+      allowedIpV6AddressRanges: params.allowedIpV6AddressRanges,
       userPool: auth.userPool,
       idPool: auth.idPool,
+      userPoolClient: auth.client,
       table: database.table,
+      statsTable: database.statsTable,
+      knowledgeBaseId: params.ragKnowledgeBaseId || props.knowledgeBaseId,
       agents: props.agents,
       guardrailIdentify: props.guardrailIdentifier,
       guardrailVersion: props.guardrailVersion,
     });
 
+    // WAF
     if (
-      props.allowedIpV4AddressRanges ||
-      props.allowedIpV6AddressRanges ||
-      props.allowedCountryCodes
+      params.allowedIpV4AddressRanges ||
+      params.allowedIpV6AddressRanges ||
+      params.allowedCountryCodes
     ) {
       const regionalWaf = new CommonWebAcl(this, 'RegionalWaf', {
         scope: 'REGIONAL',
-        allowedIpV4AddressRanges: props.allowedIpV4AddressRanges,
-        allowedIpV6AddressRanges: props.allowedIpV6AddressRanges,
-        allowedCountryCodes: props.allowedCountryCodes,
+        allowedIpV4AddressRanges: params.allowedIpV4AddressRanges,
+        allowedIpV6AddressRanges: params.allowedIpV6AddressRanges,
+        allowedCountryCodes: params.allowedCountryCodes,
       });
       new CfnWebACLAssociation(this, 'ApiWafAssociation', {
         resourceArn: api.api.deploymentStage.stageArn,
@@ -134,73 +113,157 @@ export class GenerativeAiUseCasesStack extends Stack {
       });
     }
 
+    // SpeechToSpeech (for bidirectional communication)
+    const speechToSpeech = new SpeechToSpeech(this, 'SpeechToSpeech', {
+      envSuffix: params.env,
+      api: api.api,
+      userPool: auth.userPool,
+      speechToSpeechModelIds: params.speechToSpeechModelIds,
+      crossAccountBedrockRoleArn: params.crossAccountBedrockRoleArn,
+    });
+
+    // MCP
+    let mcpEndpoint: string | null = null;
+    if (params.mcpEnabled) {
+      const mcpApi = new McpApi(this, 'McpApi', {
+        idPool: auth.idPool,
+        isSageMakerStudio: props.isSageMakerStudio,
+        fileBucket: api.fileBucket,
+      });
+      mcpEndpoint = mcpApi.endpoint;
+    }
+
+    // Web Frontend
     const web = new Web(this, 'Api', {
-      apiEndpointUrl: api.api.url,
+      // Auth
       userPoolId: auth.userPool.userPoolId,
       userPoolClientId: auth.client.userPoolClientId,
       idPoolId: auth.idPool.identityPoolId,
+      selfSignUpEnabled: params.selfSignUpEnabled,
+      samlAuthEnabled: params.samlAuthEnabled,
+      samlCognitoDomainName: params.samlCognitoDomainName,
+      samlCognitoFederatedIdentityProviderName:
+        params.samlCognitoFederatedIdentityProviderName,
+      // Backend
+      apiEndpointUrl: api.api.url,
       predictStreamFunctionArn: api.predictStreamFunction.functionArn,
-      ragEnabled,
-      ragKnowledgeBaseEnabled,
-      agentEnabled,
-      promptFlows,
-      promptFlowStreamFunctionArn: api.invokePromptFlowFunction.functionArn,
-      selfSignUpEnabled,
+      ragEnabled: params.ragEnabled,
+      ragKnowledgeBaseEnabled: params.ragKnowledgeBaseEnabled,
+      agentEnabled: params.agentEnabled || params.agents.length > 0,
+      flows: params.flows,
+      flowStreamFunctionArn: api.invokeFlowFunction.functionArn,
+      optimizePromptFunctionArn: api.optimizePromptFunction.functionArn,
       webAclId: props.webAclId,
       modelRegion: api.modelRegion,
       modelIds: api.modelIds,
-      multiModalModelIds: api.multiModalModelIds,
       imageGenerationModelIds: api.imageGenerationModelIds,
+      videoGenerationModelIds: api.videoGenerationModelIds,
       endpointNames: api.endpointNames,
-      samlAuthEnabled,
-      samlCognitoDomainName,
-      samlCognitoFederatedIdentityProviderName,
       agentNames: api.agentNames,
+      inlineAgents: params.inlineAgents,
+      useCaseBuilderEnabled: params.useCaseBuilderEnabled,
+      speechToSpeechNamespace: speechToSpeech.namespace,
+      speechToSpeechEventApiEndpoint: speechToSpeech.eventApiEndpoint,
+      speechToSpeechModelIds: params.speechToSpeechModelIds,
+      mcpEnabled: params.mcpEnabled,
+      mcpEndpoint,
+      // Frontend
+      hiddenUseCases: params.hiddenUseCases,
+      // Custom Domain
       cert: props.cert,
-      hostName: props.hostName,
-      domainName: props.domainName,
-      hostedZoneId: props.hostedZoneId,
+      hostName: params.hostName,
+      domainName: params.domainName,
+      hostedZoneId: params.hostedZoneId,
     });
 
-    if (ragEnabled) {
+    // RAG
+    if (params.ragEnabled) {
       const rag = new Rag(this, 'Rag', {
+        envSuffix: params.env,
+        kendraIndexLanguage: params.kendraIndexLanguage,
+        kendraIndexArnInCdkContext: params.kendraIndexArn,
+        kendraDataSourceBucketName: params.kendraDataSourceBucketName,
+        kendraIndexScheduleEnabled: params.kendraIndexScheduleEnabled,
+        kendraIndexScheduleCreateCron: params.kendraIndexScheduleCreateCron,
+        kendraIndexScheduleDeleteCron: params.kendraIndexScheduleDeleteCron,
         userPool: auth.userPool,
         api: api.api,
       });
 
-      // File API から data source の Bucket のファイルをダウンロードできるようにする
-      // 既存の Kendra を import している場合、data source が S3 ではない可能性がある
-      // その際は rag.dataSourceBucketName が undefined になって権限は付与されない
-      if (rag.dataSourceBucketName) {
-        api.allowDownloadFile(rag.dataSourceBucketName);
+      // Allow downloading files from the File API to the data source Bucket
+      // If you are importing existing Kendra, there is a possibility that the data source is not S3
+      // In that case, rag.dataSourceBucketName will be undefined and the permission will not be granted
+      if (
+        rag.dataSourceBucketName &&
+        api.getFileDownloadSignedUrlFunction.role
+      ) {
+        allowS3AccessWithSourceIpCondition(
+          rag.dataSourceBucketName,
+          api.getFileDownloadSignedUrlFunction.role,
+          'read',
+          {
+            ipv4: params.allowedIpV4AddressRanges,
+            ipv6: params.allowedIpV6AddressRanges,
+          }
+        );
       }
     }
 
-    if (ragKnowledgeBaseEnabled) {
-      new RagKnowledgeBase(this, 'RagKnowledgeBase', {
-        knowledgeBaseId: props.knowledgeBaseId!,
-        dataSourceBucketName: props.knowledgeBaseDataSourceBucketName!,
+    // RAG Knowledge Base
+    if (params.ragKnowledgeBaseEnabled) {
+      const knowledgeBaseId =
+        params.ragKnowledgeBaseId || props.knowledgeBaseId;
+      if (knowledgeBaseId) {
+        new RagKnowledgeBase(this, 'RagKnowledgeBase', {
+          modelRegion: params.modelRegion,
+          crossAccountBedrockRoleArn: params.crossAccountBedrockRoleArn,
+          knowledgeBaseId: knowledgeBaseId,
+          userPool: auth.userPool,
+          api: api.api,
+        });
+        // Allow downloading files from the File API to the data source Bucket
+        if (
+          props.knowledgeBaseDataSourceBucketName &&
+          api.getFileDownloadSignedUrlFunction.role
+        ) {
+          allowS3AccessWithSourceIpCondition(
+            props.knowledgeBaseDataSourceBucketName,
+            api.getFileDownloadSignedUrlFunction.role,
+            'read',
+            {
+              ipv4: params.allowedIpV4AddressRanges,
+              ipv6: params.allowedIpV6AddressRanges,
+            }
+          );
+        }
+      }
+    }
+
+    // Usecase builder
+    if (params.useCaseBuilderEnabled) {
+      new UseCaseBuilder(this, 'UseCaseBuilder', {
         userPool: auth.userPool,
         api: api.api,
       });
-
-      // File API から data source の Bucket のファイルをダウンロードできるようにする
-      api.allowDownloadFile(props.knowledgeBaseDataSourceBucketName!);
     }
 
+    // Transcribe
     new Transcribe(this, 'Transcribe', {
       userPool: auth.userPool,
       idPool: auth.idPool,
       api: api.api,
+      allowedIpV4AddressRanges: params.allowedIpV4AddressRanges,
+      allowedIpV6AddressRanges: params.allowedIpV6AddressRanges,
     });
 
+    // Cfn Outputs
     new CfnOutput(this, 'Region', {
       value: this.region,
     });
 
-    if (props.hostName && props.domainName) {
+    if (params.hostName && params.domainName) {
       new CfnOutput(this, 'WebUrl', {
-        value: `https://${props.hostName}.${props.domainName}`,
+        value: `https://${params.hostName}.${params.domainName}`,
       });
     } else {
       new CfnOutput(this, 'WebUrl', {
@@ -224,28 +287,32 @@ export class GenerativeAiUseCasesStack extends Stack {
       value: api.predictStreamFunction.functionArn,
     });
 
-    new CfnOutput(this, 'InvokePromptFlowFunctionArn', {
-      value: api.invokePromptFlowFunction.functionArn,
+    new CfnOutput(this, 'OptimizePromptFunctionArn', {
+      value: api.optimizePromptFunction.functionArn,
     });
 
-    new CfnOutput(this, 'PromptFlows', {
-      value: Buffer.from(JSON.stringify(promptFlows)).toString('base64'),
+    new CfnOutput(this, 'InvokeFlowFunctionArn', {
+      value: api.invokeFlowFunction.functionArn,
+    });
+
+    new CfnOutput(this, 'Flows', {
+      value: Buffer.from(JSON.stringify(params.flows)).toString('base64'),
     });
 
     new CfnOutput(this, 'RagEnabled', {
-      value: ragEnabled.toString(),
+      value: params.ragEnabled.toString(),
     });
 
     new CfnOutput(this, 'RagKnowledgeBaseEnabled', {
-      value: ragKnowledgeBaseEnabled.toString(),
+      value: params.ragKnowledgeBaseEnabled.toString(),
     });
 
     new CfnOutput(this, 'AgentEnabled', {
-      value: agentEnabled.toString(),
+      value: (params.agentEnabled || params.agents.length > 0).toString(),
     });
 
     new CfnOutput(this, 'SelfSignUpEnabled', {
-      value: selfSignUpEnabled.toString(),
+      value: params.selfSignUpEnabled.toString(),
     });
 
     new CfnOutput(this, 'ModelRegion', {
@@ -256,12 +323,12 @@ export class GenerativeAiUseCasesStack extends Stack {
       value: JSON.stringify(api.modelIds),
     });
 
-    new CfnOutput(this, 'MultiModalModelIds', {
-      value: JSON.stringify(api.multiModalModelIds),
-    });
-
     new CfnOutput(this, 'ImageGenerateModelIds', {
       value: JSON.stringify(api.imageGenerationModelIds),
+    });
+
+    new CfnOutput(this, 'VideoGenerateModelIds', {
+      value: JSON.stringify(api.videoGenerationModelIds),
     });
 
     new CfnOutput(this, 'EndpointNames', {
@@ -269,22 +336,57 @@ export class GenerativeAiUseCasesStack extends Stack {
     });
 
     new CfnOutput(this, 'SamlAuthEnabled', {
-      value: samlAuthEnabled.toString(),
+      value: params.samlAuthEnabled.toString(),
     });
 
     new CfnOutput(this, 'SamlCognitoDomainName', {
-      value: samlCognitoDomainName.toString(),
+      value: params.samlCognitoDomainName ?? '',
     });
 
     new CfnOutput(this, 'SamlCognitoFederatedIdentityProviderName', {
-      value: samlCognitoFederatedIdentityProviderName.toString(),
+      value: params.samlCognitoFederatedIdentityProviderName ?? '',
     });
 
     new CfnOutput(this, 'AgentNames', {
-      value: JSON.stringify(api.agentNames),
+      value: Buffer.from(JSON.stringify(api.agentNames)).toString('base64'),
+    });
+
+    new CfnOutput(this, 'InlineAgents', {
+      value: params.inlineAgents.toString(),
+    });
+
+    new CfnOutput(this, 'UseCaseBuilderEnabled', {
+      value: params.useCaseBuilderEnabled.toString(),
+    });
+
+    new CfnOutput(this, 'HiddenUseCases', {
+      value: JSON.stringify(params.hiddenUseCases),
+    });
+
+    new CfnOutput(this, 'SpeechToSpeechNamespace', {
+      value: speechToSpeech.namespace,
+    });
+
+    new CfnOutput(this, 'SpeechToSpeechEventApiEndpoint', {
+      value: speechToSpeech.eventApiEndpoint,
+    });
+
+    new CfnOutput(this, 'SpeechToSpeechModelIds', {
+      value: JSON.stringify(params.speechToSpeechModelIds),
+    });
+
+    new CfnOutput(this, 'McpEnabled', {
+      value: params.mcpEnabled.toString(),
+    });
+
+    new CfnOutput(this, 'McpEndpoint', {
+      value: mcpEndpoint ?? '',
     });
 
     this.userPool = auth.userPool;
     this.userPoolClient = auth.client;
+
+    this.exportValue(this.userPool.userPoolId);
+    this.exportValue(this.userPoolClient.userPoolClientId);
   }
 }

@@ -1,5 +1,5 @@
 import { Handler, Context } from 'aws-lambda';
-import { PredictRequest } from 'generative-ai-use-cases-jp';
+import { PredictRequest } from 'generative-ai-use-cases';
 import api from './utils/api';
 import { defaultModel } from './utils/models';
 
@@ -22,7 +22,8 @@ export const handler = awslambda.streamifyResponse(
     for await (const token of api[model.type].invokeStream?.(
       model,
       event.messages,
-      event.id
+      event.id,
+      event.idToken
     ) ?? []) {
       responseStream.write(token);
     }

@@ -1,14 +1,29 @@
 // ConverseAPI
+
+import { InferenceConfiguration } from '@aws-sdk/client-bedrock-runtime';
+
+export type PromptCacheField = 'messages' | 'system' | 'tools';
+export type PromptCachingConfig = {
+  autoCacheFields: {
+    [key in PromptCacheField]?: boolean;
+  };
+};
+
 // https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html#API_runtime_Converse_RequestSyntax
 export type ConverseInferenceParams = {
-  maxTokens?: number;
-  stopSequences?: string[];
-  temperature?: number;
-  topP?: number;
+  inferenceConfig?: InferenceConfiguration;
+  promptCachingConfig?: PromptCachingConfig;
 };
 
 export type UsecaseConverseInferenceParams = {
   [key: string]: ConverseInferenceParams;
+};
+
+export type AdditionalModelRequestFields = {
+  reasoningConfig?: {
+    type: 'enabled' | 'disabled';
+    budgetTokens?: number;
+  };
 };
 
 export type BaseGuardrailConfigParams = {
@@ -68,7 +83,7 @@ export type ClaudeMessageParams = {
   top_p?: number;
 };
 
-// Llama2
+// Llama
 // https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-meta.html
 export type LlamaParams = {
   prompt?: string;
@@ -88,9 +103,19 @@ export type MistralParams = {
   top_p?: number;
 };
 
+// DeepSeel
+// https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-deepseek.html
+export type DeepSeekParams = {
+  prompt?: string;
+  max_tokens?: number;
+  stop?: string[];
+  temperature?: number;
+  top_p?: number;
+};
+
 // Cohere Command R / Command R+
 // https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-cohere-command-r-plus.html
-// stream, tools, tools_results は2024/05現在Bedrockで対応していないため、コメントアウトしています。
+// stream, tools, tools_results is not supported in Bedrock yet, so commented out.
 export type CommandRParams = {
   message?: string;
   chat_history?: {
@@ -166,7 +191,7 @@ export type BedrockResponse = {
   };
   // Titan
   outputText: string;
-  // Llama2
+  // Llama
   generation: string;
   // Mistral
   outputs: {
@@ -174,4 +199,8 @@ export type BedrockResponse = {
   }[];
   // CommandR
   text: string;
+  // DeepSeek
+  choices: {
+    text: string;
+  }[];
 };

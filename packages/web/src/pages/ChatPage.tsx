@@ -10,11 +10,12 @@ import PromptList from '../components/PromptList';
 import Button from '../components/Button';
 import ButtonCopy from '../components/ButtonCopy';
 import ModalDialog from '../components/ModalDialog';
-import Textarea from '../components/Textarea';
+import ModalSystemContext from '../components/ModalSystemContext';
 import ExpandableField from '../components/ExpandableField';
 import Switch from '../components/Switch';
 import Select from '../components/Select';
-import useScroll from '../hooks/useScroll';
+import ScrollTopBottom from '../components/ScrollTopBottom';
+import useFollow from '../hooks/useFollow';
 import { PiArrowClockwiseBold, PiShareFatFill } from 'react-icons/pi';
 import { create } from 'zustand';
 import BedrockIcon from '../assets/bedrock.svg?react';
@@ -23,29 +24,23 @@ import { MODELS } from '../hooks/useModel';
 import { getPrompter } from '../prompts';
 import queryString from 'query-string';
 import useFiles from '../hooks/useFiles';
-import { FileLimit, SystemContext } from 'generative-ai-use-cases-jp';
+import {
+  AdditionalModelRequestFields,
+  FileLimit,
+  SystemContext,
+} from 'generative-ai-use-cases';
+import ModelParameters from '../components/ModelParameters';
+import { AcceptedDotExtensions } from '../utils/MediaUtils';
+import { useTranslation } from 'react-i18next';
 
 const fileLimit: FileLimit = {
-  accept: [
-    '.csv',
-    '.doc',
-    '.docx',
-    '.html',
-    '.md',
-    '.pdf',
-    '.txt',
-    '.xls',
-    '.xlsx',
-    '.gif',
-    '.jpg',
-    '.jpeg',
-    '.png',
-    '.webp',
-  ],
+  accept: AcceptedDotExtensions,
   maxFileCount: 5,
   maxFileSizeMB: 4.5,
   maxImageFileCount: 20,
   maxImageFileSizeMB: 3.75,
+  maxVideoFileCount: 1,
+  maxVideoFileSizeMB: 1000, // 1 GB for S3 input
 };
 
 type StateType = {
@@ -99,8 +94,13 @@ const ChatPage: React.FC = () => {
     setSaveSystemContext,
     setSaveSystemContextTitle,
   } = useChatPageState();
-  const { clear: clearFiles, uploadedFiles, uploadFiles } = useFiles();
   const { pathname, search } = useLocation();
+  const {
+    clear: clearFiles,
+    uploadedFiles,
+    uploadFiles,
+    base64Cache,
+  } = useFiles(pathname);
   const { chatId } = useParams();
 
   const { listSystemContexts, deleteSystemContext, updateSystemContextTitle } =
@@ -117,29 +117,41 @@ const ChatPage: React.FC = () => {
     getModelId,
     setModelId,
     loading,
+    writing,
     loadingMessages,
     isEmpty,
     messages,
     rawMessages,
     clear,
     postChat,
+    editChat,
     updateSystemContext,
     updateSystemContextByModel,
     getCurrentSystemContext,
+    retryGeneration,
+    forceToStop,
   } = useChat(pathname, chatId);
   const { createShareId, findShareId, deleteShareId } = useChatApi();
   const { createSystemContext } = useSystemContextApi();
-  const { scrollableContainer, scrolledAnchor, setFollowing } = useScroll();
+  const { scrollableContainer, setFollowing } = useFollow();
   const { getChatTitle } = useChatList();
-  const { modelIds: availableModels } = MODELS;
+  const { modelIds: availableModels, modelDisplayName } = MODELS;
   const { data: share, mutate: reloadShare } = findShareId(chatId);
   const modelId = getModelId();
   const prompter = useMemo(() => {
     return getPrompter(modelId);
   }, [modelId]);
+  const [overrideModelParameters, setOverrideModelParameters] = useState<
+    AdditionalModelRequestFields | undefined
+  >(undefined);
+  const [showSetting, setShowSetting] = useState(false);
+  const { t } = useTranslation();
+  const [forceExpandPromptList, setForceExpandPromptList] = useState<
+    number | null
+  >(null);
 
   useEffect(() => {
-    // 会話履歴のページではモデルを変更してもシステムコンテキストを変更しない
+    // On the conversation history page, do not change the system prompt even if the model is changed
     if (!chatId) {
       updateSystemContextByModel();
     }
@@ -148,14 +160,26 @@ const ChatPage: React.FC = () => {
 
   const title = useMemo(() => {
     if (chatId) {
-      return getChatTitle(chatId) || 'チャット';
+      return getChatTitle(chatId) || t('chat.title');
     } else {
-      return 'チャット';
+      return t('chat.title');
     }
-  }, [chatId, getChatTitle]);
+  }, [chatId, getChatTitle, t]);
 
+  const accept = useMemo(() => {
+    if (!modelId) return [];
+    const feature = MODELS.modelMetadata[modelId];
+    return [
+      ...(feature.flags.doc ? fileLimit.accept.doc : []),
+      ...(feature.flags.image ? fileLimit.accept.image : []),
+      ...(feature.flags.video ? fileLimit.accept.video : []),
+    ];
+  }, [modelId]);
   const fileUpload = useMemo(() => {
-    return MODELS.multiModalModelIds.includes(modelId);
+    return accept.length > 0;
+  }, [accept]);
+  const setting = useMemo(() => {
+    return MODELS.modelMetadata[modelId]?.flags.reasoning ?? false;
   }, [modelId]);
 
   useEffect(() => {
@@ -189,18 +213,61 @@ const ChatPage: React.FC = () => {
       undefined,
       undefined,
       undefined,
-      fileUpload ? uploadedFiles : undefined
+      fileUpload ? uploadedFiles : undefined,
+      undefined,
+      undefined,
+      undefined,
+      base64Cache,
+      overrideModelParameters
     );
     setContent('');
     clearFiles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [content, uploadedFiles, fileUpload, setFollowing]);
+  }, [content, base64Cache, fileUpload, setFollowing, overrideModelParameters]);
+
+  const onRetry = useCallback(() => {
+    retryGeneration(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      base64Cache,
+      overrideModelParameters
+    );
+  }, [retryGeneration, base64Cache, overrideModelParameters]);
 
   const onReset = useCallback(() => {
     clear();
     setContent('');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clear]);
+  }, [clear, setContent]);
+
+  const onStop = useCallback(() => {
+    forceToStop();
+  }, [forceToStop]);
+
+  const onEdit = useCallback(
+    (modifiedPrompt: string) => {
+      setFollowing(true);
+      editChat(
+        modifiedPrompt,
+        false,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        base64Cache,
+        overrideModelParameters
+      );
+    },
+    [editChat, base64Cache, setFollowing, overrideModelParameters]
+  );
 
   const [creatingShareId, setCreatingShareId] = useState(false);
   const [deletingShareId, setDeletingShareId] = useState(false);
@@ -330,26 +397,31 @@ const ChatPage: React.FC = () => {
   };
 
   const handleDragOver = (event: React.DragEvent) => {
-    // ファイルドラッグ時にオーバーレイを表示
+    // When a file is dragged, display the overlay
     event.preventDefault();
     setIsOver(true);
   };
 
   const handleDragLeave = (event: React.DragEvent) => {
-    // ファイルドラッグ時にオーバーレイを非表示
+    // When a file is dragged, hide the overlay
     event.preventDefault();
     setIsOver(false);
   };
 
   const handleDrop = (event: React.DragEvent) => {
-    // ファイルドロップ時にファイルを追加
+    // When a file is dropped, add the file
     event.preventDefault();
     setIsOver(false);
     if (event.dataTransfer.files) {
-      // ファイルを反映しアップロード
-      uploadFiles(Array.from(event.dataTransfer.files), fileLimit);
+      // Reflect the file and upload it
+      uploadFiles(Array.from(event.dataTransfer.files), fileLimit, accept);
     }
   };
+
+  // Initialize forceExpandPromptList to null when the path changes
+  useEffect(() => {
+    setForceExpandPromptList(null);
+  }, [pathname, setForceExpandPromptList]);
 
   return (
     <>
@@ -366,35 +438,44 @@ const ChatPage: React.FC = () => {
             onDrop={handleDrop}
             className="fixed bottom-0 left-0 right-0 top-0 z-[999] bg-slate-300 p-10 text-center">
             <div className="flex h-full w-full items-center justify-center outline-dashed">
-              <div className="font-bold">
-                ファイルをドロップしてアップロード
-              </div>
+              <div className="font-bold">{t('chat.drop_files')}</div>
             </div>
           </div>
         )}
 
-        <div className="mt-2 flex w-full items-end justify-center lg:mt-0">
+        <div className="mt-2 flex w-full items-end justify-center lg:mt-0 print:hidden">
           <Select
             value={modelId}
             onChange={setModelId}
             options={availableModels.map((m) => {
-              return { value: m, label: m };
+              return { value: m, label: modelDisplayName(m) };
             })}
           />
         </div>
 
         {((isEmpty && !loadingMessages) || loadingMessages) && (
-          <div className="relative flex h-[calc(100vh-13rem)] flex-col items-center justify-center">
+          <div className="relative flex h-[calc(100vh-13rem)] flex-col items-center justify-center gap-y-4">
             <BedrockIcon
               className={`fill-gray-400 ${
                 loadingMessages ? 'animate-pulse' : ''
               }`}
             />
+
+            {!loadingMessages && (
+              <Button
+                className="text-sm"
+                outlined
+                onClick={() => {
+                  setForceExpandPromptList(Math.random());
+                }}>
+                {t('chat.view_prompt_examples')}
+              </Button>
+            )}
           </div>
         )}
 
         {!isEmpty && !loadingMessages && (
-          <div className="my-2 flex flex-col items-end pr-3">
+          <div className="my-2 flex flex-col items-end pr-3 print:hidden">
             {chatId && (
               <div>
                 <button
@@ -403,14 +484,14 @@ const ChatPage: React.FC = () => {
                     setShowShareIdModal(true);
                   }}>
                   <PiShareFatFill className="mr-1" />
-                  {share ? <>シェア中</> : <>シェアする</>}
+                  {share ? <>{t('chat.sharing')}</> : <>{t('chat.share')}</>}
                 </button>
               </div>
             )}
             <Switch
               checked={showSystemContext}
               onSwitch={setShowSystemContext}
-              label="システムコンテキストの表示"
+              label={t('chat.show_system_prompt')}
             />
           </div>
         )}
@@ -425,17 +506,30 @@ const ChatPage: React.FC = () => {
                 <ChatMessage
                   chatContent={chat}
                   loading={loading && idx === showingMessages.length - 1}
+                  setSaveSystemContext={setSaveSystemContext}
+                  setShowSystemContextModal={setShowSystemContextModal}
+                  allowRetry={idx === showingMessages.length - 1}
+                  editable={idx === showingMessages.length - 2 && !loading}
+                  onCommitEdit={
+                    idx === showingMessages.length - 2 && !loading
+                      ? onEdit
+                      : undefined
+                  }
+                  retryGeneration={onRetry}
                 />
                 <div className="w-full border-b border-gray-300"></div>
               </div>
             ))}
         </div>
-        <div ref={scrolledAnchor} />
+
+        <div className="fixed right-4 top-[calc(50vh-2rem)] z-0 lg:right-8">
+          <ScrollTopBottom />
+        </div>
 
         <div className="fixed bottom-0 z-0 flex w-full flex-col items-center justify-center lg:pr-64 print:hidden">
           {isEmpty && !loadingMessages && !chatId && (
             <ExpandableField
-              label="システムコンテキスト"
+              label={t('chat.system_prompt')}
               className="relative w-11/12 md:w-10/12 lg:w-4/6 xl:w-3/6">
               <>
                 <div className="absolute -top-2 right-0 mb-2 flex justify-end">
@@ -446,7 +540,7 @@ const ChatPage: React.FC = () => {
                       clear();
                       setInputSystemContext(currentSystemContext);
                     }}>
-                    初期化
+                    {t('chat.initialize')}
                   </Button>
                   <Button
                     outlined
@@ -455,7 +549,7 @@ const ChatPage: React.FC = () => {
                       setSaveSystemContext(inputSystemContext);
                       setShowSystemContextModal(true);
                     }}>
-                    保存
+                    {t('chat.save')}
                   </Button>
                 </div>
 
@@ -477,15 +571,25 @@ const ChatPage: React.FC = () => {
           )}
           <InputChatContent
             content={content}
-            disabled={loading}
+            disabled={loading && !writing}
             onChangeContent={setContent}
             resetDisabled={!!chatId}
             onSend={() => {
-              onSend();
+              if (!loading) {
+                onSend();
+              } else {
+                onStop();
+              }
             }}
             onReset={onReset}
             fileUpload={fileUpload}
             fileLimit={fileLimit}
+            accept={accept}
+            setting={setting}
+            onSetting={() => {
+              setShowSetting(true);
+            }}
+            canStop={writing}
           />
         </div>
       </div>
@@ -496,68 +600,31 @@ const ChatPage: React.FC = () => {
           systemContextList={systemContextList as SystemContext[]}
           onClickDeleteSystemContext={onClickDeleteSystemContext}
           onClickUpdateSystemContext={onClickUpdateSystemContext}
+          forceExpand={forceExpandPromptList}
         />
       )}
 
-      <ModalDialog
-        title="システムコンテキストの作成"
-        isOpen={showSystemContextModal}
-        onClose={() => {
-          setShowSystemContextModal(false);
-        }}>
-        <div className="py-2.5">タイトル</div>
-
-        <Textarea
-          placeholder="入力してください"
-          value={saveSystemContextTitle}
-          onChange={setSaveSystemContextTitle}
-          maxHeight={-1}
-          className="text-aws-font-color"
-        />
-
-        <div className="py-2.5">システムコンテキスト</div>
-        <Textarea
-          placeholder={saveSystemContext ?? '入力してください'}
-          value={saveSystemContext}
-          onChange={setSaveSystemContext}
-          maxHeight={500}
-          className="text-aws-font-color"
-        />
-
-        <div className="mt-4 flex justify-end gap-2">
-          <Button
-            outlined
-            onClick={() => setShowSystemContextModal(false)}
-            className="p-2">
-            キャンセル
-          </Button>
-          <Button
-            onClick={() => {
-              setShowSystemContextModal(false);
-              onCreateSystemContext();
-            }}
-            className="bg-red-500 p-2 text-white"
-            disabled={
-              saveSystemContext === '' || saveSystemContextTitle === ''
-            }>
-            作成
-          </Button>
-        </div>
-      </ModalDialog>
+      <ModalSystemContext
+        showSystemContextModal={showSystemContextModal}
+        saveSystemContext={saveSystemContext}
+        saveSystemContextTitle={saveSystemContextTitle}
+        setShowSystemContextModal={setShowSystemContextModal}
+        setSaveSystemContext={setSaveSystemContext}
+        setSaveSystemContextTitle={setSaveSystemContextTitle}
+        onCreateSystemContext={onCreateSystemContext}
+      />
 
       <ModalDialog
         isOpen={showShareIdModal}
-        title="会話履歴のシェア"
+        title={t('chat.share_conversation')}
         onClose={() => {
           setShowShareIdModal(false);
         }}>
         <div className="py-3 text-xs text-gray-600">
           {share ? (
-            <>リンクを削除することで、会話履歴の公開を停止できます。</>
+            <>{t('chat.delete_link_message')}</>
           ) : (
-            <>
-              リンクを作成することで、このアプリケーションにログイン可能な全ユーザーに対して会話履歴を公開します。
-            </>
+            <>{t('chat.create_link_message')}</>
           )}
         </div>
         {shareLink && (
@@ -576,20 +643,49 @@ const ChatPage: React.FC = () => {
                 outlined
                 className="mr-1"
                 loading={deletingShareId}>
-                リンクを開く
+                {t('chat.open_link')}
               </Button>
               <Button
                 onClick={onDeleteShareId}
                 loading={deletingShareId}
                 className="bg-red-500">
-                リンクの削除
+                {t('chat.delete_link')}
               </Button>
             </div>
           ) : (
             <Button onClick={onCreateShareId} loading={creatingShareId}>
-              リンクの作成
+              {t('chat.create_link')}
             </Button>
           )}
+        </div>
+      </ModalDialog>
+      <ModalDialog
+        isOpen={showSetting}
+        onClose={() => {
+          setShowSetting(false);
+        }}
+        title={t('chat.advanced_options')}>
+        {setting && (
+          <ExpandableField
+            label={t('chat.model_parameters')}
+            className="relative w-full"
+            defaultOpened={true}>
+            <div className="">
+              <ModelParameters
+                modelFeatureFlags={MODELS.modelMetadata[modelId].flags}
+                overrideModelParameters={overrideModelParameters}
+                setOverrideModelParameters={setOverrideModelParameters}
+              />
+            </div>
+          </ExpandableField>
+        )}
+        <div className="mt-4 flex justify-end">
+          <Button
+            onClick={() => {
+              setShowSetting(false);
+            }}>
+            {t('chat.settings')}
+          </Button>
         </div>
       </ModalDialog>
     </>

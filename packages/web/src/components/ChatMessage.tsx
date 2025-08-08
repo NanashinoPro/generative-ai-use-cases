@@ -3,28 +3,49 @@ import { useLocation } from 'react-router-dom';
 import Markdown from './Markdown';
 import ButtonCopy from './ButtonCopy';
 import ButtonFeedback from './ButtonFeedback';
+import ButtonIcon from './ButtonIcon';
 import ZoomUpImage from './ZoomUpImage';
-import { PiUserFill, PiChalkboardTeacher } from 'react-icons/pi';
-import { BaseProps } from '../@types/common';
+import ZoomUpVideo from './ZoomUpVideo';
 import {
-  ShownMessage,
-  UpdateFeedbackRequest,
-} from 'generative-ai-use-cases-jp';
+  PiUserFill,
+  PiChalkboardTeacher,
+  PiFloppyDisk,
+  PiArrowClockwise,
+  PiArrowUp,
+  PiArrowDown,
+  PiCloudArrowUp,
+  PiCloudArrowDown,
+  PiNotePencil,
+  PiCheck,
+  PiX,
+} from 'react-icons/pi';
+import { BaseProps } from '../@types/common';
+import { ShownMessage, UpdateFeedbackRequest } from 'generative-ai-use-cases';
 import BedrockIcon from '../assets/bedrock.svg?react';
 import useChat from '../hooks/useChat';
 import useTyping from '../hooks/useTyping';
-import useFileApi from '../hooks/useFileApi';
 import FileCard from './FileCard';
 import FeedbackForm from './FeedbackForm';
+import Textarea from './Textarea';
+import useFiles from '../hooks/useFiles';
+import { useTranslation } from 'react-i18next';
 
 type Props = BaseProps & {
   idx?: number;
   chatContent?: ShownMessage;
   loading?: boolean;
   hideFeedback?: boolean;
+  hideSaveSystemContext?: boolean;
+  setSaveSystemContext?: (s: string) => void;
+  setShowSystemContextModal?: (value: boolean) => void;
+  allowRetry?: boolean;
+  editable?: boolean;
+  retryGeneration?: () => void;
+  onCommitEdit?: (modifiedPrompt: string) => void;
 };
 
 const ChatMessage: React.FC<Props> = (props) => {
+  const { t } = useTranslation();
   const chatContent = useMemo(() => {
     return props.chatContent;
   }, [props]);
@@ -34,14 +55,17 @@ const ChatMessage: React.FC<Props> = (props) => {
   const [isSendingFeedback, setIsSendingFeedback] = useState(false);
   const [showFeedbackForm, setShowFeedbackForm] = useState(false);
   const [showThankYouMessage, setShowThankYouMessage] = useState(false);
-  const { getFileDownloadSignedUrl } = useFileApi();
+  const [editing, setEditing] = useState(false);
+  const [editingPrompt, setEditingPrompt] = useState('');
+  const [isOpenTrace, setIsOpenTrace] = useState(false);
+  const { getFileDownloadSignedUrl } = useFiles(pathname);
 
   const { setTypingTextInput, typingTextOutput } = useTyping(
     chatContent?.role === 'assistant' && props.loading
   );
 
   useEffect(() => {
-    if (chatContent?.content) {
+    if (chatContent?.content !== undefined && chatContent?.content !== null) {
       setTypingTextInput(chatContent?.content);
     }
   }, [chatContent, setTypingTextInput]);
@@ -50,11 +74,15 @@ const ChatMessage: React.FC<Props> = (props) => {
 
   useEffect(() => {
     if (chatContent?.extraData) {
-      // ローディング表示にするために、画像の数だけ要素を用意して、undefinedを初期値として設定する
+      // To display the loading, prepare as many elements as the number of images, and set undefined as the initial value
       setSignedUrls(new Array(chatContent.extraData.length).fill(undefined));
       Promise.all(
         chatContent.extraData.map(async (file) => {
-          return await getFileDownloadSignedUrl(file.source.data);
+          if (file.source.type === 's3') {
+            return await getFileDownloadSignedUrl(file.source.data, true);
+          } else {
+            return file.source.data;
+          }
         })
       ).then((results) => setSignedUrls(results));
     } else {
@@ -87,7 +115,7 @@ const ChatMessage: React.FC<Props> = (props) => {
   };
 
   const handleFeedbackClick = (feedback: string) => {
-    // ボタン押した際、ユーザーからの詳細フィードバック前にDBに送る。
+    // When the button is pressed, send the detailed feedback from the user to the DB before it is displayed.
     onSendFeedback({
       createdDate: props.chatContent!.createdDate!,
       feedback: feedback,
@@ -118,6 +146,11 @@ const ChatMessage: React.FC<Props> = (props) => {
     setShowFeedbackForm(false);
   };
 
+  const toggleOpenTrace = (e: React.MouseEvent<HTMLElement, MouseEvent>) => {
+    e.preventDefault();
+    setIsOpenTrace(!isOpenTrace);
+  };
+
   return (
     <div
       className={`flex justify-center ${
@@ -146,23 +179,37 @@ const ChatMessage: React.FC<Props> = (props) => {
             </div>
           )}
 
-          <div className="ml-5 w-full pr-14">
+          <div className="ml-5 w-full pr-8 lg:pr-14">
             {chatContent?.trace && (
-              <details className="mb-2 cursor-pointer rounded border p-2">
-                <summary className="text-sm">
-                  <div className="inline-flex gap-1">
-                    トレース
-                    {props.loading && !chatContent?.content && (
-                      <div className="border-aws-sky size-5 animate-spin rounded-full border-4 border-t-transparent"></div>
-                    )}
-                  </div>
-                </summary>
-                <Markdown prefix={`${props.idx}-trace`}>
-                  {chatContent.trace}
-                </Markdown>
-              </details>
+              <div className="mb-2 rounded border p-2">
+                <details className="cursor-pointer" open={isOpenTrace}>
+                  <summary className="text-sm" onClick={toggleOpenTrace}>
+                    <div className="inline-flex gap-1">
+                      {t('common.trace')}
+                      {props.loading && !chatContent?.content && (
+                        <div className="border-aws-sky size-5 animate-spin rounded-full border-4 border-t-transparent"></div>
+                      )}
+                    </div>
+                  </summary>
+                  <Markdown prefix={`${props.idx}-trace`}>
+                    {chatContent.trace}
+                  </Markdown>
+                </details>
+
+                {!isOpenTrace &&
+                  props.loading &&
+                  !chatContent?.content &&
+                  chatContent?.traceInlineMessage && (
+                    <Markdown
+                      className="mt-2"
+                      prefix={`${props.idx}-last-trace`}>
+                      {chatContent.traceInlineMessage}
+                    </Markdown>
+                  )}
+              </div>
             )}
-            {chatContent?.extraData && (
+
+            {chatContent?.extraData && chatContent.extraData.length > 0 && (
               <div className="mb-2 flex flex-wrap gap-2">
                 {chatContent.extraData.map((data, idx) => {
                   if (data.type === 'image') {
@@ -184,16 +231,22 @@ const ChatMessage: React.FC<Props> = (props) => {
                         size="m"
                       />
                     );
+                  } else if (data.type === 'video') {
+                    return (
+                      <ZoomUpVideo key={idx} src={signedUrls[idx]} size="m" />
+                    );
                   }
                 })}
               </div>
             )}
             {chatContent?.role === 'user' && (
-              <div className="break-all">
-                {typingTextOutput.split('\n').map((c, idx) => (
-                  <div key={idx}>{c}</div>
-                ))}
-              </div>
+              <>
+                {editing ? (
+                  <Textarea value={editingPrompt} onChange={setEditingPrompt} />
+                ) : (
+                  <div className="whitespace-pre-wrap">{typingTextOutput}</div>
+                )}
+              </>
             )}
             {chatContent?.role === 'assistant' && (
               <Markdown prefix={`${props.idx}`}>
@@ -206,32 +259,96 @@ const ChatMessage: React.FC<Props> = (props) => {
               </Markdown>
             )}
             {chatContent?.role === 'system' && (
-              <div className="break-all">
-                {typingTextOutput.split('\n').map((c, idx) => (
-                  <div key={idx}>{c}</div>
-                ))}
-              </div>
+              <div className="whitespace-pre-wrap">{typingTextOutput}</div>
             )}
             {props.loading && (chatContent?.content ?? '') === '' && (
+              /* eslint-disable-next-line @shopify/jsx-no-hardcoded-content */
               <div className="animate-pulse">▍</div>
             )}
 
             {chatContent?.role === 'assistant' && (
-              <div className="mb-1 mt-2 text-right text-xs text-gray-400 lg:mb-0">
-                {chatContent?.llmType}
+              <div className="mt-2 flex flex-wrap justify-end gap-2">
+                <div className="text-right text-xs text-gray-400 lg:mb-0">
+                  {chatContent?.llmType}
+                </div>
+                {chatContent?.metadata && (
+                  <div className="flex items-center gap-1 text-xs text-gray-400">
+                    <PiArrowUp title="Input tokens" />
+                    {chatContent.metadata.usage.inputTokens}
+                    <PiArrowDown title="Output tokens" />
+                    {chatContent.metadata.usage.outputTokens}
+                    {chatContent.metadata.usage.cacheWriteInputTokens && (
+                      <>
+                        <PiCloudArrowUp title="Cache write input tokens" />
+                        {chatContent.metadata.usage.cacheWriteInputTokens}
+                      </>
+                    )}
+                    {chatContent.metadata.usage.cacheReadInputTokens && (
+                      <>
+                        <PiCloudArrowDown title="Cache read input tokens" />
+                        {chatContent.metadata.usage.cacheReadInputTokens}
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
         </div>
 
-        <div className="flex items-start justify-end print:hidden">
-          {(chatContent?.role === 'user' || chatContent?.role === 'system') && (
-            <div className="lg:w-8"></div>
+        <div className="mt-1 flex items-start justify-end pr-8 lg:pr-14 print:hidden">
+          {chatContent?.role === 'system' && !props.hideSaveSystemContext && (
+            <ButtonIcon
+              className="text-gray-400"
+              onClick={() => {
+                props.setSaveSystemContext?.(chatContent?.content || '');
+                props.setShowSystemContextModal?.(true);
+              }}>
+              <PiFloppyDisk />
+            </ButtonIcon>
+          )}
+          {chatContent?.role === 'user' && props.editable && (
+            <>
+              {editing ? (
+                <>
+                  <ButtonIcon
+                    onClick={() => {
+                      setEditing(false);
+                    }}>
+                    <PiX className="text-red-500" />
+                  </ButtonIcon>
+                  <ButtonIcon
+                    onClick={() => {
+                      if (props.onCommitEdit) {
+                        setEditing(false);
+                        props.onCommitEdit(editingPrompt);
+                      }
+                    }}>
+                    <PiCheck className="text-green-500" />
+                  </ButtonIcon>
+                </>
+              ) : (
+                <ButtonIcon
+                  onClick={() => {
+                    setEditingPrompt(chatContent?.content ?? '');
+                    setEditing(true);
+                  }}>
+                  <PiNotePencil className="text-gray-400" />
+                </ButtonIcon>
+              )}
+            </>
           )}
           {chatContent?.role === 'assistant' &&
             !props.loading &&
             !props.hideFeedback && (
               <>
+                {props.allowRetry && (
+                  <ButtonIcon
+                    className="mr-0.5 text-gray-400"
+                    onClick={() => props.retryGeneration?.()}>
+                    <PiArrowClockwise />
+                  </ButtonIcon>
+                )}
                 <ButtonCopy
                   className="mr-0.5 text-gray-400"
                   text={chatContent?.content || ''}
@@ -268,7 +385,7 @@ const ChatMessage: React.FC<Props> = (props) => {
           )}
           {showThankYouMessage && (
             <div className="mt-2 rounded-md bg-green-100 p-2 text-center text-green-700">
-              フィードバックを受け付けました。ありがとうございます。
+              {t('common.feedback_received')}
             </div>
           )}
         </div>

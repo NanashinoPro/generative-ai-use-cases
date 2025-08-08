@@ -9,42 +9,54 @@ import {
   RestApi,
 } from 'aws-cdk-lib/aws-apigateway';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
-import { Runtime } from 'aws-cdk-lib/aws-lambda';
+import { LAMBDA_RUNTIME_NODEJS } from '../../consts';
 
 export interface RagKnowledgeBaseProps {
-  knowledgeBaseId: string;
-  dataSourceBucketName: string;
-  userPool: UserPool;
-  api: RestApi;
+  // Context Params
+  readonly modelRegion: string;
+  readonly crossAccountBedrockRoleArn?: string | null;
+
+  // Resource
+  readonly knowledgeBaseId: string;
+  readonly userPool: UserPool;
+  readonly api: RestApi;
 }
 
 export class RagKnowledgeBase extends Construct {
-  public readonly dataSourceBucketName: string;
-
   constructor(scope: Construct, id: string, props: RagKnowledgeBaseProps) {
     super(scope, id);
 
-    const modelRegion: string = this.node.tryGetContext('modelRegion')!;
+    const { modelRegion } = props;
 
     const retrieveFunction = new NodejsFunction(this, 'Retrieve', {
-      runtime: Runtime.NODEJS_20_X,
+      runtime: LAMBDA_RUNTIME_NODEJS,
       entry: './lambda/retrieveKnowledgeBase.ts',
       timeout: cdk.Duration.minutes(15),
       environment: {
         KNOWLEDGE_BASE_ID: props.knowledgeBaseId,
         MODEL_REGION: modelRegion,
+        CROSS_ACCOUNT_BEDROCK_ROLE_ARN: props.crossAccountBedrockRoleArn ?? '',
       },
     });
 
-    retrieveFunction.role?.addToPrincipalPolicy(
-      new iam.PolicyStatement({
+    if (!props.crossAccountBedrockRoleArn) {
+      retrieveFunction.role?.addToPrincipalPolicy(
+        new iam.PolicyStatement({
+          effect: iam.Effect.ALLOW,
+          resources: [
+            `arn:aws:bedrock:${modelRegion}:${cdk.Stack.of(this).account}:knowledge-base/${props.knowledgeBaseId ?? ''}`,
+          ],
+          actions: ['bedrock:Retrieve'],
+        })
+      );
+    } else {
+      const assumeRolePolicy = new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
-        resources: [
-          `arn:aws:bedrock:${modelRegion}:${cdk.Stack.of(this).account}:knowledge-base/${props.knowledgeBaseId}`,
-        ],
-        actions: ['bedrock:Retrieve'],
-      })
-    );
+        actions: ['sts:AssumeRole'],
+        resources: [props.crossAccountBedrockRoleArn],
+      });
+      retrieveFunction.role?.addToPrincipalPolicy(assumeRolePolicy);
+    }
 
     const authorizer = new CognitoUserPoolsAuthorizer(this, 'Authorizer', {
       cognitoUserPools: [props.userPool],

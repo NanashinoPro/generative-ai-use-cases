@@ -1,19 +1,20 @@
 import React, { useCallback, useEffect } from 'react';
 import InputChatContent from '../components/InputChatContent';
 import { create } from 'zustand';
-import Alert from '../components/Alert';
 import useChat from '../hooks/useChat';
 import useRag from '../hooks/useRag';
-import { useLocation, Link } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import ChatMessage from '../components/ChatMessage';
 import Select from '../components/Select';
-import useScroll from '../hooks/useScroll';
+import ScrollTopBottom from '../components/ScrollTopBottom';
+import useFollow from '../hooks/useFollow';
 import BedrockIcon from '../assets/bedrock.svg?react';
 import KendraIcon from '../assets/kendra.svg?react';
 import { PiPlus } from 'react-icons/pi';
 import { RagPageQueryParams } from '../@types/navigate';
 import { MODELS } from '../hooks/useModel';
 import queryString from 'query-string';
+import { useTranslation } from 'react-i18next';
 
 type StateType = {
   content: string;
@@ -32,12 +33,14 @@ const useRagPageState = create<StateType>((set) => {
 });
 
 const RagPage: React.FC = () => {
+  const { t } = useTranslation();
   const { content, setContent } = useRagPageState();
   const { pathname, search } = useLocation();
-  const { getModelId, setModelId } = useChat(pathname);
-  const { postMessage, clear, loading, messages, isEmpty } = useRag(pathname);
-  const { scrollableContainer, scrolledAnchor, setFollowing } = useScroll();
-  const { modelIds: availableModels } = MODELS;
+  const { getModelId, setModelId, forceToStop } = useChat(pathname);
+  const { postMessage, clear, loading, writing, messages, isEmpty } =
+    useRag(pathname);
+  const { scrollableContainer, setFollowing } = useFollow();
+  const { modelIds: availableModels, modelDisplayName } = MODELS;
   const modelId = getModelId();
 
   useEffect(() => {
@@ -67,11 +70,15 @@ const RagPage: React.FC = () => {
     setContent('');
   }, [clear, setContent]);
 
+  const onStop = useCallback(() => {
+    forceToStop();
+  }, [forceToStop]);
+
   return (
     <>
       <div className={`${!isEmpty ? 'screen:pb-36' : ''} relative`}>
         <div className="invisible my-0 flex h-0 items-center justify-center text-xl font-semibold lg:visible lg:my-5 lg:h-min print:visible print:my-5 print:h-min">
-          RAG チャット
+          {t('rag.title')}
         </div>
 
         <div className="mt-2 flex w-full items-end justify-center lg:mt-0">
@@ -79,7 +86,7 @@ const RagPage: React.FC = () => {
             value={modelId}
             onChange={setModelId}
             options={availableModels.map((m) => {
-              return { value: m, label: m };
+              return { value: m, label: modelDisplayName(m) };
             })}
           />
         </div>
@@ -91,30 +98,6 @@ const RagPage: React.FC = () => {
               <PiPlus className="text-2xl text-gray-400" />
               <BedrockIcon className="fill-gray-400" />
             </div>
-          </div>
-        )}
-
-        {isEmpty && (
-          <div
-            className={`absolute inset-x-0 top-28 m-auto flex justify-center`}>
-            <Alert severity="info">
-              <div>
-                RAG (Retrieval Augmented Generation)
-                手法のチャットを行うことができます。
-              </div>
-              <div>
-                メッセージが入力されると Amazon Kendra
-                でドキュメントを検索し、検索したドキュメントをもとに LLM
-                が回答を生成します。
-              </div>
-              <div className="font-bold">
-                Amazon Kendra の検索のみを実行する場合は
-                <Link className="text-aws-smile" to="/kendra">
-                  こちら
-                </Link>
-                のページに遷移してください。
-              </div>
-            </Alert>
           </div>
         )}
 
@@ -130,17 +113,25 @@ const RagPage: React.FC = () => {
             </div>
           ))}
         </div>
-        <div ref={scrolledAnchor} />
+
+        <div className="fixed right-4 top-[calc(50vh-2rem)] z-0 lg:right-8">
+          <ScrollTopBottom />
+        </div>
 
         <div className="fixed bottom-0 z-0 flex w-full items-end justify-center lg:pr-64 print:hidden">
           <InputChatContent
             content={content}
-            disabled={loading}
+            disabled={loading && !writing}
             onChangeContent={setContent}
             onSend={() => {
-              onSend();
+              if (!loading) {
+                onSend();
+              } else {
+                onStop();
+              }
             }}
             onReset={onReset}
+            canStop={writing}
           />
         </div>
       </div>

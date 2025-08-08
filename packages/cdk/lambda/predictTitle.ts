@@ -2,7 +2,7 @@ import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import {
   PredictTitleRequest,
   UnrecordedMessage,
-} from 'generative-ai-use-cases-jp';
+} from 'generative-ai-use-cases';
 import { setChatTitle } from './repository';
 import api from './utils/api';
 import { defaultModel } from './utils/models';
@@ -11,15 +11,21 @@ export const handler = async (
   event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
   try {
-    const req: PredictTitleRequest = JSON.parse(event.body!);
+    if (!event.body) {
+      throw new Error('Request body is missing');
+    }
 
-    // model.type が bedrockAgent の場合は title が生成できないため bedrock のデフォルトモデルを使う
-    const model =
-      req.model.type === 'bedrockAgent'
-        ? defaultModel
-        : req.model || defaultModel;
+    const req = JSON.parse(event.body) as PredictTitleRequest;
 
-    // タイトル設定用の質問を追加
+    // Validation
+    if (!req.prompt || !req.chat?.id || !req.chat?.createdDate || !req.id) {
+      throw new Error('Invalid request format');
+    }
+
+    // Use the lightweight default model for title generation
+    const model = defaultModel;
+
+    // Add a question for title setting
     const messages: UnrecordedMessage[] = [
       {
         role: 'user',
@@ -27,11 +33,10 @@ export const handler = async (
       },
     ];
 
-    // 新規モデル追加時は、デフォルトで Claude の prompter が利用されるため
-    // 出力が <output></output> で囲まれる可能性がある
-    // 以下の処理ではそれに対応するため、<output></output> を含む xml タグを削除している
+    // When adding a new model, the default Claude prompter is used, so the output may be enclosed in <output></output>
+    // The following processing removes the xml tags containing <output></output>
     const title =
-      (await api[model.type].invoke?.(model, messages, req.id))?.replace(
+      (await api['bedrock'].invoke?.(model, messages, req.id))?.replace(
         /<([^>]+)>([\s\S]*?)<\/\1>/,
         '$2'
       ) ?? '';
