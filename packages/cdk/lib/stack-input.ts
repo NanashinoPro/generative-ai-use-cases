@@ -136,6 +136,17 @@ const baseStackInputSchema = z.object({
     )
     .default([]),
   inlineAgents: z.boolean().default(false),
+  // Agent Core Runtime
+  createGenericAgentCoreRuntime: z.boolean().default(false),
+  agentCoreRegion: z.string().nullish(),
+  agentCoreExternalRuntimes: z
+    .array(
+      z.object({
+        name: z.string(),
+        arn: z.string(),
+      })
+    )
+    .default([]),
   // MCP
   mcpEnabled: z.boolean().default(false),
   // Guardrail
@@ -215,6 +226,8 @@ export const processedStackInputSchema = baseStackInputSchema.extend({
       region: z.string(),
     })
   ),
+  // Processed agentCoreRegion (null -> modelRegion)
+  agentCoreRegion: z.string(),
 });
 
 export type StackInput = z.infer<typeof stackInputSchema>;

@@ -48,6 +48,9 @@ describe('GenerativeAiUseCases', () => {
     searchApiKey: 'XXXXXX',
     agents: [],
     flows: [],
+    createGenericAgentCoreRuntime: true,
+    agentCoreRegion: 'us-east-1',
+    agentCoreExternalRuntimes: [],
     allowedIpV4AddressRanges: null,
     allowedIpV6AddressRanges: null,
     allowedCountryCodes: ['JP'],
@@ -70,6 +73,7 @@ describe('GenerativeAiUseCases', () => {
       cloudFrontWafStack,
       ragKnowledgeBaseStack,
       agentStack,
+      agentCoreStack,
       guardrail,
       generativeAiUseCasesStack,
       dashboardStack,
@@ -80,6 +84,7 @@ describe('GenerativeAiUseCases', () => {
       !cloudFrontWafStack ||
       !ragKnowledgeBaseStack ||
       !agentStack ||
+      !agentCoreStack ||
       !guardrail ||
       !generativeAiUseCasesStack ||
       !dashboardStack
@@ -89,6 +94,7 @@ describe('GenerativeAiUseCases', () => {
     const cloudFrontWafTemplate = Template.fromStack(cloudFrontWafStack);
     const ragKnowledgeBaseTemplate = Template.fromStack(ragKnowledgeBaseStack);
     const agentTemplate = Template.fromStack(agentStack);
+    const agentCoreTemplate = Template.fromStack(agentCoreStack);
     const guardrailTemplate = Template.fromStack(guardrail);
     const generativeAiUseCasesTemplate = Template.fromStack(
       generativeAiUseCasesStack
@@ -99,6 +105,7 @@ describe('GenerativeAiUseCases', () => {
     expect(cloudFrontWafTemplate.toJSON()).toMatchSnapshot();
     expect(ragKnowledgeBaseTemplate.toJSON()).toMatchSnapshot();
     expect(agentTemplate.toJSON()).toMatchSnapshot();
+    expect(agentCoreTemplate.toJSON()).toMatchSnapshot();
     expect(guardrailTemplate.toJSON()).toMatchSnapshot();
     expect(generativeAiUseCasesTemplate.toJSON()).toMatchSnapshot();
     expect(dashboardTemplate.toJSON()).toMatchSnapshot();
@@ -116,6 +123,7 @@ describe('GenerativeAiUseCases', () => {
       closedNetworkStack,
       ragKnowledgeBaseStack,
       agentStack,
+      agentCoreStack,
       guardrail,
       generativeAiUseCasesStack,
       dashboardStack,
@@ -126,6 +134,7 @@ describe('GenerativeAiUseCases', () => {
       !closedNetworkStack ||
       !ragKnowledgeBaseStack ||
       !agentStack ||
+      !agentCoreStack ||
       !guardrail ||
       !generativeAiUseCasesStack ||
       !dashboardStack
@@ -135,6 +144,7 @@ describe('GenerativeAiUseCases', () => {
     const closedNetworkTemplate = Template.fromStack(closedNetworkStack);
     const ragKnowledgeBaseTemplate = Template.fromStack(ragKnowledgeBaseStack);
     const agentTemplate = Template.fromStack(agentStack);
+    const agentCoreTemplate = Template.fromStack(agentCoreStack);
     const guardrailTemplate = Template.fromStack(guardrail);
     const generativeAiUseCasesTemplate = Template.fromStack(
       generativeAiUseCasesStack
@@ -145,6 +155,7 @@ describe('GenerativeAiUseCases', () => {
     expect(closedNetworkTemplate.toJSON()).toMatchSnapshot();
     expect(ragKnowledgeBaseTemplate.toJSON()).toMatchSnapshot();
     expect(agentTemplate.toJSON()).toMatchSnapshot();
+    expect(agentCoreTemplate.toJSON()).toMatchSnapshot();
     expect(guardrailTemplate.toJSON()).toMatchSnapshot();
     expect(generativeAiUseCasesTemplate.toJSON()).toMatchSnapshot();
     expect(dashboardTemplate.toJSON()).toMatchSnapshot();

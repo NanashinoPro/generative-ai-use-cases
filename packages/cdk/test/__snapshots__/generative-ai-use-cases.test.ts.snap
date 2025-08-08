@@ -24112,6 +24112,26 @@ exports[`GenerativeAiUseCases matches the snapshot 5`] = `
         ],
       },
     },
+    "AgentCoreEnabled": {
+      "Value": "true",
+    },
+    "AgentCoreExternalRuntimes": {
+      "Value": "[]",
+    },
+    "AgentCoreGenericRuntime": {
+      "Value": {
+        "Fn::Join": [
+          "",
+          [
+            "{"name":"GenericAgentCoreRuntime","arn":"",
+            {
+              "Fn::ImportValue": "AgentCoreStack:ExportsOutputFnGetAttGenericAgentCoreGenericAgentCoreRuntimeD3EBAAF7AgentCoreRuntimeArn010E372F",
+            },
+            ""}",
+          ],
+        ],
+      },
+    },
     "AgentEnabled": {
       "Value": "true",
     },
@@ -33724,6 +33744,7 @@ exports[`GenerativeAiUseCases matches the snapshot 5`] = `
         "Environment": {
           "Variables": {
             "CROSS_ACCOUNT_BEDROCK_ROLE_ARN": "",
+            "MODEL_REGION": "us-east-1",
           },
         },
         "Handler": "index.handler",
@@ -33803,6 +33824,39 @@ exports[`GenerativeAiUseCases matches the snapshot 5`] = `
                       "arn:aws:s3:::",
                       {
                         "Ref": "APIFileBucket8FB29855",
+                      },
+                      "/*",
+                    ],
+                  ],
+                },
+              ],
+            },
+            {
+              "Action": [
+                "s3:GetBucket*",
+                "s3:GetObject*",
+                "s3:List*",
+              ],
+              "Effect": "Allow",
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:aws:s3:::",
+                      {
+                        "Fn::ImportValue": "AgentCoreStack:ExportsOutputRefGenericAgentCoreAgentCoreFileBucket0430DA423298A79F",
+                      },
+                    ],
+                  ],
+                },
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:aws:s3:::",
+                      {
+                        "Fn::ImportValue": "AgentCoreStack:ExportsOutputRefGenericAgentCoreAgentCoreFileBucket0430DA423298A79F",
                       },
                       "/*",
                     ],
@@ -35790,6 +35844,39 @@ exports[`GenerativeAiUseCases matches the snapshot 5`] = `
       "Type": "AWS::IAM::Policy",
       "UpdateReplacePolicy": "Delete",
     },
+    "AgentCoreAgentCoreRuntimePolicyA2A56192": {
+      "DeletionPolicy": "Delete",
+      "Properties": {
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "bedrock-agentcore:InvokeAgentRuntime",
+              "Effect": "Allow",
+              "Resource": {
+                "Fn::Join": [
+                  "",
+                  [
+                    {
+                      "Fn::ImportValue": "AgentCoreStack:ExportsOutputFnGetAttGenericAgentCoreGenericAgentCoreRuntimeD3EBAAF7AgentCoreRuntimeArn010E372F",
+                    },
+                    "*",
+                  ],
+                ],
+              },
+            },
+          ],
+          "Version": "2012-10-17",
+        },
+        "PolicyName": "AgentCoreAgentCoreRuntimePolicyA2A56192",
+        "Roles": [
+          {
+            "Ref": "AuthIdentityPoolAuthenticatedRole09311B20",
+          },
+        ],
+      },
+      "Type": "AWS::IAM::Policy",
+      "UpdateReplacePolicy": "Delete",
+    },
     "ApiBuildWeb746ABF13": {
       "DeletionPolicy": "Delete",
       "Properties": {
@@ -35809,6 +35896,20 @@ exports[`GenerativeAiUseCases matches the snapshot 5`] = `
         "destinationBucketName": "cdk-hnb659fds-assets-123456890123-us-east-1",
         "environment": {
           "NODE_OPTIONS": "--max-old-space-size=4096",
+          "VITE_APP_AGENT_CORE_ENABLED": "true",
+          "VITE_APP_AGENT_CORE_EXTERNAL_RUNTIMES": "[]",
+          "VITE_APP_AGENT_CORE_GENERIC_RUNTIME": {
+            "Fn::Join": [
+              "",
+              [
+                "{"name":"GenericAgentCoreRuntime","arn":"",
+                {
+                  "Fn::ImportValue": "AgentCoreStack:ExportsOutputFnGetAttGenericAgentCoreGenericAgentCoreRuntimeD3EBAAF7AgentCoreRuntimeArn010E372F",
+                },
+                ""}",
+              ],
+            ],
+          },
           "VITE_APP_AGENT_ENABLED": "true",
           "VITE_APP_AGENT_NAMES": "["SearchEngine","CodeInterpreter"]",
           "VITE_APP_API_ENDPOINT": {

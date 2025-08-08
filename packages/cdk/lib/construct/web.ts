@@ -17,6 +17,7 @@ import { ARecord, HostedZone, RecordTarget } from 'aws-cdk-lib/aws-route53';
 import { CloudFrontTarget } from 'aws-cdk-lib/aws-route53-targets';
 import { ICertificate } from 'aws-cdk-lib/aws-certificatemanager';
 import {
+  AgentCoreConfiguration,
   Flow,
   HiddenUseCases,
   ModelConfiguration,
@@ -61,6 +62,10 @@ export interface WebProps {
   readonly webBucket?: s3.Bucket;
   readonly cognitoUserPoolProxyEndpoint?: string;
   readonly cognitoIdentityPoolProxyEndpoint?: string;
+  readonly agentCoreEnabled: boolean;
+  readonly agentCoreGenericRuntime?: AgentCoreConfiguration;
+  readonly agentCoreExternalRuntimes: AgentCoreConfiguration[];
+  readonly agentCoreRegion?: string;
 }
 
 export class Web extends Construct {
@@ -285,6 +290,13 @@ export class Web extends Construct {
           props.cognitoUserPoolProxyEndpoint ?? '',
         VITE_APP_COGNITO_IDENTITY_POOL_PROXY_ENDPOINT:
           props.cognitoIdentityPoolProxyEndpoint ?? '',
+        VITE_APP_AGENT_CORE_ENABLED: props.agentCoreEnabled.toString(),
+        VITE_APP_AGENT_CORE_GENERIC_RUNTIME: JSON.stringify(
+          props.agentCoreGenericRuntime
+        ),
+        VITE_APP_AGENT_CORE_EXTERNAL_RUNTIMES: JSON.stringify(
+          props.agentCoreExternalRuntimes
+        ),
       },
     });
     // Enhance computing resources
